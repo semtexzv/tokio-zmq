@@ -21,6 +21,7 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
+use futures::{future::lazy, Future};
 use zmq;
 
 use crate::{
@@ -29,6 +30,7 @@ use crate::{
         types::{Dealer, Pair, Pub, Pull, Push, Rep, Req, Router, Sub, Xpub, Xsub},
         Socket,
     },
+    SESSION,
 };
 
 fn bind_all(sock: zmq::Socket, binds: &[&str]) -> zmq::Result<zmq::Socket> {
@@ -148,7 +150,7 @@ impl<'a, T> SockConfig<'a, T> {
         self
     }
 
-    fn do_build(self, kind: zmq::SocketType) -> Result<Socket, Error> {
+    fn configure_sock(self, kind: zmq::SocketType) -> Result<zmq::Socket, Error> {
         let SockConfig {
             ctx,
             bind,
@@ -164,14 +166,22 @@ impl<'a, T> SockConfig<'a, T> {
         let sock = bind_all(sock, &bind)?;
         let sock = connect_all(sock, &connect)?;
 
-        Ok(Socket::from_sock(sock))
+        Ok(sock)
+    }
+
+    fn do_build(self, kind: zmq::SocketType) -> impl Future<Item = Socket, Error = Error> {
+        let sock = self.configure_sock(kind);
+
+        lazy(move || sock)
+            .and_then(move |sock| SESSION.init(sock))
+            .map(Socket::from_sock)
     }
 }
 
 impl<'a> SockConfig<'a, Dealer> {
     /// Finalize the `SockConfig` into a `Dealer` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Dealer, Error> {
+    pub fn build(self) -> impl Future<Item = Dealer, Error = Error> {
         self.do_build(zmq::DEALER).map(|inner| Dealer { inner })
     }
 }
@@ -179,7 +189,7 @@ impl<'a> SockConfig<'a, Dealer> {
 impl<'a> SockConfig<'a, Pub> {
     /// Finalize the `SockConfig` into a `Pub` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Pub, Error> {
+    pub fn build(self) -> impl Future<Item = Pub, Error = Error> {
         self.do_build(zmq::PUB).map(|inner| Pub { inner })
     }
 }
@@ -187,7 +197,7 @@ impl<'a> SockConfig<'a, Pub> {
 impl<'a> SockConfig<'a, Pull> {
     /// Finalize the `SockConfig` into a `Pull` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Pull, Error> {
+    pub fn build(self) -> impl Future<Item = Pull, Error = Error> {
         self.do_build(zmq::PULL).map(|inner| Pull { inner })
     }
 }
@@ -195,7 +205,7 @@ impl<'a> SockConfig<'a, Pull> {
 impl<'a> SockConfig<'a, Push> {
     /// Finalize the `SockConfig` into a `Push` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Push, Error> {
+    pub fn build(self) -> impl Future<Item = Push, Error = Error> {
         self.do_build(zmq::PUSH).map(|inner| Push { inner })
     }
 }
@@ -203,7 +213,7 @@ impl<'a> SockConfig<'a, Push> {
 impl<'a> SockConfig<'a, Rep> {
     /// Finalize the `SockConfig` into a `Req` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Rep, Error> {
+    pub fn build(self) -> impl Future<Item = Rep, Error = Error> {
         self.do_build(zmq::REP).map(|inner| Rep { inner })
     }
 }
@@ -211,7 +221,7 @@ impl<'a> SockConfig<'a, Rep> {
 impl<'a> SockConfig<'a, Req> {
     /// Finalize the `SockConfig` into a `Req` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Req, Error> {
+    pub fn build(self) -> impl Future<Item = Req, Error = Error> {
         self.do_build(zmq::REQ).map(|inner| Req { inner })
     }
 }
@@ -219,7 +229,7 @@ impl<'a> SockConfig<'a, Req> {
 impl<'a> SockConfig<'a, Router> {
     /// Finalize the `SockConfig` into a `Router` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Router, Error> {
+    pub fn build(self) -> impl Future<Item = Router, Error = Error> {
         self.do_build(zmq::ROUTER).map(|inner| Router { inner })
     }
 }
@@ -227,7 +237,7 @@ impl<'a> SockConfig<'a, Router> {
 impl<'a> SockConfig<'a, Xpub> {
     /// Finalize the `SockConfig` into a `Xpub` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Xpub, Error> {
+    pub fn build(self) -> impl Future<Item = Xpub, Error = Error> {
         self.do_build(zmq::XPUB).map(|inner| Xpub { inner })
     }
 }
@@ -235,7 +245,7 @@ impl<'a> SockConfig<'a, Xpub> {
 impl<'a> SockConfig<'a, Xsub> {
     /// Finalize the `SockConfig` into a `Xsub` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Xsub, Error> {
+    pub fn build(self) -> impl Future<Item = Xsub, Error = Error> {
         self.do_build(zmq::XSUB).map(|inner| Xsub { inner })
     }
 }
@@ -268,7 +278,16 @@ pub struct SubConfig<'a> {
 impl<'a> SubConfig<'a> {
     /// Finalize the `SubConfig` into a `Sub` if the creation is successful, or into an Error
     /// if something went wrong.
-    pub fn build(self) -> Result<Sub, Error> {
+    pub fn build(self) -> impl Future<Item = Sub, Error = Error> {
+        let sock = self.configure_sock();
+
+        lazy(move || sock)
+            .and_then(|sock| SESSION.init(sock))
+            .map(Socket::from_sock)
+            .map(|inner| Sub { inner })
+    }
+
+    fn configure_sock(self) -> Result<zmq::Socket, Error> {
         let SubConfig {
             ctx,
             bind,
@@ -285,9 +304,7 @@ impl<'a> SubConfig<'a> {
         let sock = connect_all(sock, &connect)?;
         sock.set_subscribe(filter)?;
 
-        Ok(Sub {
-            inner: Socket::from_sock(sock),
-        })
+        Ok(sock)
     }
 }
 
@@ -308,7 +325,16 @@ impl<'a> PairConfig<'a> {
     /// this should not be called with `zmq::SocketType`s other than `zmq::PAIR`. The `Pair`
     /// wrapper uses this builder, so it is better to use the Pair wrapper than directly building a
     /// PAIR socket.
-    pub fn build(self, _: zmq::SocketType) -> Result<Pair, Error> {
+    pub fn build(self, _: zmq::SocketType) -> impl Future<Item = Pair, Error = Error> {
+        let sock = self.configure_sock();
+
+        lazy(move || sock)
+            .and_then(|sock| SESSION.init(sock))
+            .map(Socket::from_sock)
+            .map(|inner| Pair { inner })
+    }
+
+    fn configure_sock(self) -> Result<zmq::Socket, Error> {
         let PairConfig {
             ctx,
             addr,
@@ -326,8 +352,6 @@ impl<'a> PairConfig<'a> {
             sock.connect(addr)?;
         }
 
-        Ok(Pair {
-            inner: Socket::from_sock(sock),
-        })
+        Ok(sock)
     }
 }

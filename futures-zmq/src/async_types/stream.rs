@@ -25,7 +25,7 @@ use futures::{Async, Future, Stream};
 use crate::{async_types::MultipartResponse, error::Error, socket::Socket};
 
 enum StreamState {
-    Pending(zmq::Socket),
+    Pending,
     Running(MultipartResponse<Socket>),
     Polling,
 }
@@ -39,8 +39,8 @@ impl StreamState {
         &mut self,
         mut fut: MultipartResponse<Socket>,
     ) -> Result<Async<Option<Multipart>>, Error> {
-        if let Async::Ready((msg, sock)) = fut.poll()? {
-            *self = StreamState::Pending(sock.inner());
+        if let Async::Ready((msg, _)) = fut.poll()? {
+            *self = StreamState::Pending;
 
             Ok(Async::Ready(Some(msg)))
         } else {
@@ -50,9 +50,9 @@ impl StreamState {
         }
     }
 
-    fn poll_fetch(&mut self) -> Result<Async<Option<Multipart>>, Error> {
+    fn poll_fetch(&mut self, sock: usize) -> Result<Async<Option<Multipart>>, Error> {
         match self.polling() {
-            StreamState::Pending(sock) => {
+            StreamState::Pending => {
                 let fut = MultipartResponse::new(sock);
 
                 self.poll_fut(fut)
@@ -71,6 +71,7 @@ where
     T: From<Socket>,
 {
     state: StreamState,
+    sock: usize,
     phantom: PhantomData<T>,
 }
 
@@ -78,9 +79,10 @@ impl<T> MultipartStream<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: zmq::Socket) -> Self {
+    pub fn new(sock: usize) -> Self {
         MultipartStream {
-            state: StreamState::Pending(sock),
+            state: StreamState::Pending,
+            sock,
             phantom: PhantomData,
         }
     }
@@ -94,6 +96,6 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        self.state.poll_fetch()
+        self.state.poll_fetch(self.sock)
     }
 }

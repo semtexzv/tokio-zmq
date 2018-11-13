@@ -55,32 +55,33 @@ impl EndHandler for Stop {
 fn publisher_thread() {
     let ctx = Arc::new(zmq::Context::new());
 
-    let publisher = Pub::builder(Arc::clone(&ctx))
-        .bind("tcp://*:5561")
-        .build()
-        .unwrap();
+    let publisher_fut = Pub::builder(Arc::clone(&ctx)).bind("tcp://*:5561").build();
 
-    let syncservice = Rep::builder(ctx).bind("tcp://*:5562").build().unwrap();
+    let syncservice_fut = Rep::builder(ctx).bind("tcp://*:5562").build();
 
     println!("Waiting for subscribers");
 
-    let (sync_sink, sync_stream) = syncservice.sink_stream(25).split();
+    let runner = publisher_fut
+        .join(syncservice_fut)
+        .and_then(|(publisher, syncservice)| {
+            let (sync_sink, sync_stream) = syncservice.sink_stream(25).split();
 
-    let runner = iter_ok(0..SUBSCRIBERS)
-        .zip(sync_stream)
-        .map(|(_, _)| zmq::Message::from_slice(b"").unwrap().into())
-        .forward(sync_sink)
-        .and_then(move |_| {
-            println!("Broadcasting message");
+            iter_ok(0..SUBSCRIBERS)
+                .zip(sync_stream)
+                .map(|(_, _)| zmq::Message::from_slice(b"").unwrap().into())
+                .forward(sync_sink)
+                .and_then(move |_| {
+                    println!("Broadcasting message");
 
-            iter_ok(0..MESSAGES)
-                .map(|_| zmq::Message::from_slice(b"Rhubarb").unwrap().into())
-                .forward(publisher.sink(25))
-        })
-        .and_then(|(_stream, sink)| {
-            let msg = zmq::Message::from_slice(b"END").unwrap();
+                    iter_ok(0..MESSAGES)
+                        .map(|_| zmq::Message::from_slice(b"Rhubarb").unwrap().into())
+                        .forward(publisher.sink(25))
+                })
+                .and_then(|(_stream, sink)| {
+                    let msg = zmq::Message::from_slice(b"END").unwrap();
 
-            sink.send(msg.into())
+                    sink.send(msg.into())
+                })
         });
 
     tokio::run(runner.map(|_| ()).or_else(|e| {
@@ -92,30 +93,30 @@ fn publisher_thread() {
 fn subscriber_thread() {
     let ctx = Arc::new(zmq::Context::new());
 
-    let subscriber = Sub::builder(Arc::clone(&ctx))
+    let subscriber_fut = Sub::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5561")
         .filter(b"")
-        .build()
-        .unwrap();
+        .build();
 
-    let syncclient = Req::builder(ctx)
-        .connect("tcp://localhost:5562")
-        .build()
-        .unwrap();
+    let syncclient_fut = Req::builder(ctx).connect("tcp://localhost:5562").build();
 
     let msg = zmq::Message::from_slice(b"").unwrap();
 
-    let runner = syncclient
-        .send(msg.into())
-        .and_then(|syncclient| syncclient.recv())
-        .and_then(move |_| {
-            subscriber
-                .stream()
-                .with_end_handler(Stop)
-                .fold(0, |counter, _| Ok(counter + 1) as Result<usize, Error>)
-                .and_then(|total| {
-                    println!("Received {} updates", total);
-                    Ok(())
+    let runner = subscriber_fut
+        .join(syncclient_fut)
+        .and_then(|(subscriber, syncclient)| {
+            syncclient
+                .send(msg.into())
+                .and_then(|syncclient| syncclient.recv())
+                .and_then(move |_| {
+                    subscriber
+                        .stream()
+                        .with_end_handler(Stop)
+                        .fold(0, |counter, _| Ok(counter + 1) as Result<usize, Error>)
+                        .and_then(|total| {
+                            println!("Received {} updates", total);
+                            Ok(())
+                        })
                 })
         });
 

@@ -36,7 +36,7 @@ pub use async_zmq_types::Multipart;
 
 pub use self::{
     error::Error,
-    poll_thread::{RecvFuture, SendFuture, SendRecvFuture, Session},
+    poll_thread::{RecvFuture, SendFuture, Session},
     socket::{
         types::{Dealer, Pair, Pub, Pull, Push, Rep, Req, Router, Sub, Xpub, Xsub},
         Socket,

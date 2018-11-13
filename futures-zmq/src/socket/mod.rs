@@ -38,7 +38,7 @@ use crate::{
 /// create new instances of wrapper types.
 pub struct Socket {
     // Reads and Writes data
-    sock: zmq::Socket,
+    sock: usize,
 }
 
 impl Socket {
@@ -48,7 +48,7 @@ impl Socket {
     }
 
     /// Retrieve a Reference-Counted Pointer to self's socket.
-    pub fn inner(self) -> zmq::Socket {
+    pub fn inner(self) -> usize {
         self.sock
     }
 
@@ -56,7 +56,7 @@ impl Socket {
     ///
     /// This assumes that `sock` is already configured properly. Please don't call this directly
     /// unless you know what you're doing.
-    pub fn from_sock(sock: zmq::Socket) -> Self {
+    pub fn from_sock(sock: usize) -> Self {
         Socket { sock }
     }
 }
@@ -94,8 +94,8 @@ where
     }
 }
 
-impl From<zmq::Socket> for Socket {
-    fn from(sock: zmq::Socket) -> Self {
+impl From<usize> for Socket {
+    fn from(sock: usize) -> Self {
         Socket { sock }
     }
 }

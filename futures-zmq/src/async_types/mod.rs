@@ -22,8 +22,6 @@ mod sink;
 mod sink_stream;
 mod stream;
 
-pub(crate) use self::future::{RequestResponse, SendRecvState};
-
 pub use self::{
     future::{MultipartRequest, MultipartResponse},
     sink::MultipartSink,

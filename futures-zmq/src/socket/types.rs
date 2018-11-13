@@ -19,12 +19,10 @@
 
 //! This module defines all the socket wrapper types that can be used with futures.
 
-use zmq;
-
 use crate::socket::Socket;
 
 // needed for derive
-type RawSocket = zmq::Socket;
+type RawSocket = usize;
 
 /* -------------------------------------------------------------------------- */
 

@@ -39,42 +39,42 @@ impl ControlHandler for Stop {
 
 fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let cmd = Sub::builder(Arc::clone(&ctx))
+    let cmd_fut = Sub::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5559")
         .filter(b"")
-        .build()
-        .unwrap();
-    let conn = Pull::builder(Arc::clone(&ctx))
-        .bind("tcp://*:5558")
-        .build()
-        .unwrap();
-    let send_cmd = Pub::builder(ctx).bind("tcp://*:5559").build().unwrap();
+        .build();
+    let conn_fut = Pull::builder(Arc::clone(&ctx)).bind("tcp://*:5558").build();
+    let send_cmd_fut = Pub::builder(ctx).bind("tcp://*:5559").build();
 
-    let process = conn
-        .stream()
-        .controlled(cmd.stream(), Stop)
-        .filter_map(|multipart| {
-            multipart
-                .into_iter()
-                .filter_map(|msg| {
-                    let stop = if let Some(s_msg) = msg.as_str() {
-                        println!("msg: '{}'", s_msg);
-                        s_msg == "STOP"
-                    } else {
-                        false
-                    };
+    let process = cmd_fut
+        .join(conn_fut)
+        .join(send_cmd_fut)
+        .and_then(|((cmd, conn), send_cmd)| {
+            conn.stream()
+                .controlled(cmd.stream(), Stop)
+                .filter_map(|multipart| {
+                    multipart
+                        .into_iter()
+                        .filter_map(|msg| {
+                            let stop = if let Some(s_msg) = msg.as_str() {
+                                println!("msg: '{}'", s_msg);
+                                s_msg == "STOP"
+                            } else {
+                                false
+                            };
 
-                    if stop {
-                        Some(msg)
-                    } else {
-                        None
-                    }
+                            if stop {
+                                Some(msg)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .pop()
+                        .map(Multipart::from)
                 })
-                .collect::<Vec<_>>()
-                .pop()
-                .map(Multipart::from)
-        })
-        .forward(send_cmd.sink(25));
+                .forward(send_cmd.sink(25))
+        });
 
     tokio::run(process.map(|_| ()).or_else(|e| {
         println!("Error: {:?}", e);
