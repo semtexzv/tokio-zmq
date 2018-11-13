@@ -67,8 +67,10 @@ impl SendState {
             SendState::Pending(sock) => {
                 if let Some(msg) = multipart.pop_front() {
                     let fut = if !multipart.is_empty() {
+                        trace!("Sending {:?}, SNDMORE", msg.as_str());
                         SESSION.send(sock, msg, SNDMORE)
                     } else {
+                        trace!("Sending {:?}, 0", msg.as_str());
                         SESSION.send(sock, msg, 0)
                     };
 
@@ -140,6 +142,7 @@ impl RecvState {
         T: From<Socket>,
     {
         if let Async::Ready((sock, msg)) = fut.poll()? {
+            trace!("Received {:?}, more? {}", msg.as_str(), msg.get_more());
             if msg.get_more() {
                 *self = RecvState::Pending(sock);
 
@@ -273,9 +276,11 @@ impl SendRecvState {
         match self.polling() {
             SendRecvState::Pending(sock, mut send_multipart) => {
                 if let Some(msg) = send_multipart.pop_front() {
-                    let fut = if send_multipart.len() > 1 {
+                    let fut = if !send_multipart.is_empty() {
+                        trace!("send_recv sendking {:?}, SNDMORE", msg.as_str());
                         SESSION.send_recv(sock, msg, SNDMORE)
                     } else {
+                        trace!("send_recv sendking {:?}, 0", msg.as_str());
                         SESSION.send_recv(sock, msg, 0)
                     };
 

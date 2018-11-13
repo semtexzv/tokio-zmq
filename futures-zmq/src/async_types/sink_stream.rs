@@ -84,6 +84,8 @@ impl SinkStreamState {
 
                     self.poll_sink(fut, multiparts)
                 } else {
+                    *self = SinkStreamState::Pending(sock);
+
                     Ok(Async::Ready(()))
                 }
             }
@@ -113,7 +115,7 @@ impl SinkStreamState {
                 Ok(Async::NotReady)
             }
             SinkStreamState::Polling => {
-                error!("Called polling while polling");
+                error!("poll_flush, Called polling while polling");
                 return Err(Error::Polling);
             }
         }
@@ -163,7 +165,7 @@ impl SinkStreamState {
                 }
             },
             SinkStreamState::Polling => {
-                error!("Called polling while polling");
+                error!("poll_fetch, Called polling while polling");
                 return Err(Error::Polling);
             }
         }

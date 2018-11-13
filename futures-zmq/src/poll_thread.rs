@@ -398,6 +398,7 @@ impl PollThread {
 
     fn try_recv(&mut self) {
         if self.rx.drain() {
+            trace!("new messages to handle");
             while let Some(msg) = self.rx.try_recv() {
                 self.handle_request(msg);
 
@@ -413,6 +414,7 @@ impl PollThread {
 
         match request {
             Request::SendMessage(sock, message, flags, responder) => {
+                trace!("Handling send");
                 self.sockets.push(Pollable {
                     sock,
                     kind,
@@ -421,6 +423,7 @@ impl PollThread {
                 });
             }
             Request::ReceiveMessage(sock, responder) => {
+                trace!("Handling recv");
                 self.sockets.push(Pollable {
                     sock,
                     kind,
@@ -429,6 +432,7 @@ impl PollThread {
                 });
             }
             Request::SendReceiveMessage(sock, message, flags, responder) => {
+                trace!("Handling sendrecv");
                 self.sockets.push(Pollable {
                     sock,
                     kind,
@@ -437,6 +441,7 @@ impl PollThread {
                 });
             }
             Request::Done => {
+                trace!("Handling done");
                 self.should_stop = true;
             }
         }
@@ -456,6 +461,7 @@ impl PollThread {
         }
 
         for index in self.to_remove.drain(..).rev() {
+            trace!("Dropping {}, canceled", index);
             let _pollable = self.sockets.remove(index);
         }
     }
@@ -469,15 +475,17 @@ impl PollThread {
             .map(|pollable| pollable.as_poll_item())
             .collect();
 
-        let num_signalled = poll(&mut poll_items, 30).unwrap();
+        let num_signalled = poll(&mut poll_items, 10).unwrap();
 
         let mut count = 0;
         for (index, item) in poll_items.into_iter().enumerate() {
             // Prioritize outbound messages over inbound messages
             if self.sockets[index].is_writable(&item) {
+                trace!("{} is writable", index);
                 self.to_action.push(Action::Snd(index));
                 count += 1;
             } else if self.sockets[index].is_readable(&item) {
+                trace!("{} is readable", index);
                 self.to_action.push(Action::Rcv(index));
                 count += 1;
             }
@@ -501,6 +509,7 @@ impl PollThread {
 
                     match sock.recv_msg(flags) {
                         Ok(msg) => {
+                            trace!("Received msg");
                             if kind.send_receive() {
                                 let (snd_msg, flags) = snd_msg.unwrap();
                                 if let Err(_) = responder
@@ -515,8 +524,9 @@ impl PollThread {
                             }
                         }
                         Err(e) => {
+                            error!("Error receiving message");
                             if let Err(_) = responder.send(Response::Error(sock, e.into())) {
-                                error!("Error responding with received message");
+                                error!("Error responding with error");
                             }
                         }
                     }
@@ -534,13 +544,15 @@ impl PollThread {
                     if let Some((msg, sendflags)) = msg {
                         match sock.send_msg(msg, sendflags | flags) {
                             Ok(_) => {
+                                trace!("Sent message");
                                 if let Err(_) = responder.send(Response::Sent(sock)) {
-                                    error!("Error responding with received message");
+                                    error!("Error responding with sent");
                                 }
                             }
                             Err(e) => {
+                                error!("Error sending message");
                                 if let Err(_) = responder.send(Response::Error(sock, e.into())) {
-                                    error!("Error responding with received message");
+                                    error!("Error responding with error");
                                 }
                             }
                         }

@@ -18,9 +18,9 @@
  */
 
 extern crate futures;
+extern crate futures_zmq;
 extern crate tokio;
 extern crate tokio_executor;
-extern crate futures_zmq;
 extern crate zmq;
 
 use std::sync::Arc;

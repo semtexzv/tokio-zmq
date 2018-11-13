@@ -19,9 +19,9 @@
 
 extern crate env_logger;
 extern crate futures;
+extern crate futures_zmq;
 extern crate log;
 extern crate tokio;
-extern crate futures_zmq;
 extern crate zmq;
 
 use std::{sync::Arc, thread, time::Duration};
