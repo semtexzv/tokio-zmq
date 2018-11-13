@@ -19,7 +19,7 @@ Currently Supported Sockets
  - DEALER
  - ROUTER
 
-See the [examples folder](https://git.asonix.dog/asonix/async-zmq/src/branch/master/tokio-zmq/examples) for usage examples.
+See the [examples folder](https://git.asonix.dog/asonix/async-zmq/src/branch/development/tokio-zmq/examples) for usage examples.
 
 ### Getting Started
 

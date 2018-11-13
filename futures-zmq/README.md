@@ -24,19 +24,26 @@ use futures_zmq::{Error, MultipartRequest, MultipartResponse};
 use zmq::{Context, Socket, SocketType};
 
 fn main() -> Result<(), Error> {
-    let context = Arc::new(Context::new());
+    let ctx = Arc::new(zmq::Context::new());
+    let rep = Rep::builder(ctx).bind("tcp://*:5560").build()?;
 
-    let sock = context.socket(SocketType::REP)?;
-    sock.bind("tcp://*:5000")?;
+    let (sink, stream) = rep.sink_stream(25).split();
 
-    let fut = MultipartResponse::new(sock)
-        .and_then(|(sock, msg)| {
-            println!("Echoing {:?}", msg);
-            MultipartRequest::new(sock, msg)
+    let runner = stream
+        .map(|multipart| {
+            for msg in &multipart {
+                if let Some(s) = msg.as_str() {
+                    println!("RECEIVED: {}", s);
+                }
+            }
+            multipart
         })
-        .map(|_: Socket| ());
+        .forward(sink);
 
-    fut.wait()?;
+    tokio::run(runner.map(|_| ()).or_else(|e| {
+        println!("Error: {:?}", e);
+        Ok(())
+    }));
 
     Ok(())
 }
