@@ -19,17 +19,17 @@
 
 extern crate env_logger;
 extern crate futures;
+extern crate tokio_zmq;
 extern crate log;
 extern crate rand;
 extern crate tokio;
-extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{env, fmt, sync::Arc, thread, time::Duration};
 
 use futures::{sync::mpsc, Future, Sink, Stream};
-use rand::RngCore;
 use tokio_zmq::{prelude::*, Multipart, Pub, Req, Router, Sub};
+use rand::RngCore;
 
 const NUM_CLIENTS: usize = 1000;
 const NUM_WORKERS: usize = 5;
@@ -143,23 +143,24 @@ impl ControlHandler for Stop {
 fn client_task(client_num: usize) -> usize {
     let context = Arc::new(zmq::Context::new());
 
-    let client = Req::builder(context)
+    let client_fut = Req::builder(context)
         .identity(format!("c{}", client_num).as_bytes())
         .connect("tcp://localhost:5672")
-        .build()
-        .unwrap();
+        .build();
 
     let msg = zmq::Message::from_slice(b"HELLO").unwrap();
-    let fut = client
-        .send(msg.into())
-        .from_err()
-        .and_then(|client| client.recv())
-        .and_then(move |(multipart, _)| {
-            if let Some(msg) = multipart.get(0) {
-                println!("Client {}: {}", client_num, msg.as_str().unwrap());
-            }
-            Ok(())
-        });
+    let fut = client_fut.and_then(move |client| {
+        client
+            .send(msg.into())
+            .from_err()
+            .and_then(|client| client.recv())
+            .and_then(move |(multipart, _)| {
+                if let Some(msg) = multipart.get(0) {
+                    println!("Client {}: {}", client_num, msg.as_str().unwrap());
+                }
+                Ok(())
+            })
+    });
 
     tokio::run(fut.map(|_| ()).or_else(|e| {
         println!("Error in client: {}, {:?}", e, e);
@@ -173,44 +174,47 @@ fn client_task(client_num: usize) -> usize {
 fn worker_task(worker_num: usize) -> usize {
     let context = Arc::new(zmq::Context::new());
 
-    let control = Sub::builder(Arc::clone(&context))
+    let control_fut = Sub::builder(Arc::clone(&context))
         .connect("tcp://localhost:5674")
         .filter(b"")
-        .build()
-        .unwrap();
-    let worker = Req::builder(context)
+        .build();
+    let worker_fut = Req::builder(context)
         .identity(format!("w{}", worker_num).as_bytes())
         .connect("tcp://localhost:5673")
-        .build()
-        .unwrap();
+        .build();
 
     let msg = zmq::Message::from_slice(b"READY").unwrap();
 
-    let fut = worker
-        .send(msg.into())
-        .map_err(Error::from)
-        .and_then(move |worker| {
-            let (sink, stream) = worker.sink_stream(25).split();
-
-            stream
-                .controlled(control.stream(), Stop("worker", worker_num))
+    let fut = worker_fut
+        .join(control_fut)
+        .from_err()
+        .and_then(move |(worker, control)| {
+            worker
+                .send(msg.into())
                 .map_err(Error::from)
-                .and_then(move |multipart| {
-                    let mut envelope: Envelope = Envelope::from_multipart(multipart)?;
+                .and_then(move |worker| {
+                    let (sink, stream) = worker.sink_stream(25).split();
 
-                    println!(
-                        "Worker {}: {} from {}",
-                        worker_num,
-                        envelope.request().as_str().unwrap(),
-                        envelope.addr().as_str().unwrap()
-                    );
+                    stream
+                        .controlled(control.stream(), Stop("worker", worker_num))
+                        .map_err(Error::from)
+                        .and_then(move |multipart| {
+                            let mut envelope: Envelope = Envelope::from_multipart(multipart)?;
 
-                    let msg = zmq::Message::from_slice(b"OK")?;
-                    envelope.set_request(msg);
+                            println!(
+                                "Worker {}: {} from {}",
+                                worker_num,
+                                envelope.request().as_str().unwrap(),
+                                envelope.addr().as_str().unwrap()
+                            );
 
-                    Ok(envelope.into())
+                            let msg = zmq::Message::from_slice(b"OK")?;
+                            envelope.set_request(msg);
+
+                            Ok(envelope.into())
+                        })
+                        .forward(sink)
                 })
-                .forward(sink)
         });
 
     tokio::run(fut.map(|_| ()).or_else(|e| {
@@ -226,97 +230,99 @@ fn worker_task(worker_num: usize) -> usize {
 fn broker_task() {
     let context = Arc::new(zmq::Context::new());
 
-    let frontend = Router::builder(Arc::clone(&context))
+    let frontend_fut = Router::builder(Arc::clone(&context))
         .bind("tcp://*:5672")
-        .build()
-        .unwrap();
+        .build();
 
-    let control0 = Sub::builder(Arc::clone(&context))
+    let control0_fut = Sub::builder(Arc::clone(&context))
         .connect("tcp://localhost:5674")
         .filter(b"")
-        .build()
-        .unwrap();
+        .build();
 
-    let control1 = Sub::builder(Arc::clone(&context))
+    let control1_fut = Sub::builder(Arc::clone(&context))
         .connect("tcp://localhost:5674")
         .filter(b"")
-        .build()
-        .unwrap();
+        .build();
 
-    let backend = Router::builder(context)
-        .bind("tcp://*:5673")
-        .build()
-        .unwrap();
+    let backend_fut = Router::builder(context).bind("tcp://*:5673").build();
 
-    let (worker_send, worker_recv) = mpsc::channel::<zmq::Message>(10);
+    let runner = frontend_fut
+        .join(backend_fut)
+        .join(control0_fut.join(control1_fut))
+        .from_err()
+        .and_then(|((frontend, backend), (control0, control1))| {
+            let (worker_send, worker_recv) = mpsc::channel::<zmq::Message>(10);
 
-    let (frontend_sink, frontend_stream) = frontend.sink_stream(25).split();
-    let (backend_sink, backend_stream) = backend.sink_stream(25).split();
+            let (frontend_sink, frontend_stream) = frontend.sink_stream(25).split();
+            let (backend_sink, backend_stream) = backend.sink_stream(25).split();
 
-    let back2front = backend_stream
-        .controlled(control0.stream(), Stop("broker", 0))
-        .map_err(Error::from)
-        .and_then(|mut multipart| {
-            let worker_id = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
+            let back2front = backend_stream
+                .controlled(control0.stream(), Stop("broker", 0))
+                .map_err(Error::from)
+                .and_then(|mut multipart| {
+                    let worker_id = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
 
-            Ok((multipart, worker_id))
-        })
-        .and_then(move |(multipart, worker_id)| {
-            worker_send
-                .clone()
-                .send(worker_id)
-                .map(|_| multipart)
-                .map_err(|_| Error::WorkerSend)
-        })
-        .filter_map(|mut multipart| {
-            let empty = multipart.pop_front().unwrap();
-            assert!(empty.is_empty());
-            let client_id = multipart.pop_front().unwrap();
+                    Ok((multipart, worker_id))
+                })
+                .and_then(move |(multipart, worker_id)| {
+                    worker_send
+                        .clone()
+                        .send(worker_id)
+                        .map(|_| multipart)
+                        .map_err(|_| Error::WorkerSend)
+                })
+                .filter_map(|mut multipart| {
+                    let empty = multipart.pop_front().unwrap();
+                    assert!(empty.is_empty());
+                    let client_id = multipart.pop_front().unwrap();
 
-            if &*client_id == b"READY" {
-                None
-            } else {
-                Some((multipart, client_id))
-            }
-        })
-        .and_then(|(mut multipart, client_id)| {
-            let empty = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
-            assert!(empty.is_empty());
-            let reply = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
+                    if &*client_id == b"READY" {
+                        None
+                    } else {
+                        Some((multipart, client_id))
+                    }
+                })
+                .and_then(|(mut multipart, client_id)| {
+                    let empty = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
+                    assert!(empty.is_empty());
+                    let reply = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
 
-            let mut response = Multipart::new();
+                    let mut response = Multipart::new();
 
-            response.push_back(client_id);
-            response.push_back(empty);
-            response.push_back(reply);
+                    response.push_back(client_id);
+                    response.push_back(empty);
+                    response.push_back(reply);
 
-            Ok(response)
-        })
-        .forward(frontend_sink);
+                    Ok(response)
+                })
+                .forward(frontend_sink);
 
-    let front2back = frontend_stream
-        .controlled(control1.stream(), Stop("broker", 1))
-        .map_err(Error::from)
-        .zip(worker_recv.map_err(|_| Error::WorkerRecv))
-        .and_then(|(mut multipart, worker_id)| {
-            let client_id = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
-            let empty = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
-            assert!(empty.is_empty());
-            let request = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
+            let front2back = frontend_stream
+                .controlled(control1.stream(), Stop("broker", 1))
+                .map_err(Error::from)
+                .zip(worker_recv.map_err(|_| Error::WorkerRecv))
+                .and_then(|(mut multipart, worker_id)| {
+                    let client_id = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
+                    let empty = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
+                    assert!(empty.is_empty());
+                    let request = multipart.pop_front().ok_or(Error::NotEnoughMessages)?;
 
-            let mut response = Multipart::new();
+                    let mut response = Multipart::new();
 
-            response.push_back(worker_id);
-            response.push_back(empty);
-            response.push_back(client_id);
-            response.push_back(zmq::Message::new()?);
-            response.push_back(request);
+                    response.push_back(worker_id);
+                    response.push_back(empty);
+                    response.push_back(client_id);
+                    response.push_back(zmq::Message::new()?);
+                    response.push_back(request);
 
-            Ok(response)
-        })
-        .forward(backend_sink);
+                    Ok(response)
+                })
+                .forward(backend_sink);
 
-    tokio::run(front2back.join(back2front).map(|_| ()).or_else(|e| {
+            front2back.join(back2front)
+        });
+
+    tokio::run(runner.map(|_| ()).or_else(|e| {
         println!("Error in broker: {}, {:?}", e, e);
         Ok(())
     }));
@@ -387,14 +393,14 @@ fn main() {
 
             // Set up control socket
             let context = Arc::new(zmq::Context::new());
-            let control = Pub::builder(context).bind("tcp://*:5674").build().unwrap();
+            let control_fut = Pub::builder(context).bind("tcp://*:5674").build();
 
             thread::sleep(Duration::from_secs(1));
 
             // Signal end when all clients have joined
             tokio::run(
-                control
-                    .send(zmq::Message::new().unwrap().into())
+                control_fut
+                    .and_then(|control| control.send(zmq::Message::new().unwrap().into()))
                     .map(|_| ())
                     .or_else(|e| {
                         println!("Error in main loop {}, {:?}", e, e);

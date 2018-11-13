@@ -19,12 +19,16 @@
 
 //! Provide useful types and traits for working with ZMQ Asynchronously.
 
+use std::sync::Arc;
+
 use futures::{Future, Sink, Stream};
 
+mod config;
 mod message;
 mod stream;
 
 pub use crate::{
+    config::{PairConfig, SockConfig, SocketBuilder, SubConfig},
     message::Multipart,
     stream::{ControlledStream, EndingStream},
 };
@@ -77,6 +81,8 @@ where
 
     /// Any type implementing `IntoInnerSocket` must have a way of returning an InnerSocket.
     fn socket(self) -> Self::Socket;
+
+    fn kind() -> zmq::SocketType;
 }
 
 /// The `ControlHandler` trait is used to impose stopping rules for streams that otherwise would
@@ -419,10 +425,20 @@ pub trait Controllable: Stream<Item = Multipart> + Sized {
         Self: Stream<Item = Multipart, Error = S::Error>;
 }
 
-/*
+pub trait UnPair {}
+pub trait Pair {}
+pub trait Sub {}
+pub trait UnSub {}
+
+pub trait Build<T, E> {
+    type Result: Future<Item = T, Error = E>;
+
+    fn build(self) -> Self::Result;
+}
+
 /// This trait is implemented by all socket types to allow custom builders to be created
-pub trait HasBuilder {
-    fn builder(ctx: Arc<zmq::Context>) -> SocketBuilder<Self>
+pub trait HasBuilder: IntoInnerSocket {
+    fn builder(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, Self>
     where
         Self: Sized,
     {
@@ -432,7 +448,6 @@ pub trait HasBuilder {
 
 /* ----------------------------------impls----------------------------------- */
 impl<T> HasBuilder for T where T: IntoInnerSocket {}
-*/
 
 impl<T> SinkStreamSocket for T
 where

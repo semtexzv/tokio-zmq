@@ -18,9 +18,9 @@
  */
 
 extern crate futures;
+extern crate tokio_zmq;
 extern crate tokio;
 extern crate tokio_timer;
-extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{
@@ -30,9 +30,9 @@ use std::{
 };
 
 use futures::{stream::iter_ok, Future, Stream};
-use tokio_timer::{Error as TimerError, Interval};
 use tokio_zmq::prelude::*;
 use tokio_zmq::{Error as ZmqFutError, Push};
+use tokio_timer::{Error as TimerError, Interval};
 
 #[derive(Debug)]
 enum Error {
@@ -68,40 +68,39 @@ impl From<TimerError> for Error {
 
 fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let workers = Push::builder(Arc::clone(&ctx))
-        .bind("tcp://*:5557")
-        .build()
-        .unwrap();
-    let sink = Push::builder(Arc::clone(&ctx))
+    let workers_fut = Push::builder(Arc::clone(&ctx)).bind("tcp://*:5557").build();
+    let sink_fut = Push::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5558")
-        .build()
-        .unwrap();
-    let sink2 = Push::builder(ctx)
-        .connect("tcp://localhost:5558")
-        .build()
-        .unwrap();
+        .build();
+    let sink2_fut = Push::builder(ctx).connect("tcp://localhost:5558").build();
 
     let start_msg = zmq::Message::from_slice(b"START").unwrap().into();
     let stop_msg = zmq::Message::from_slice(b"STOP").unwrap().into();
 
     let interval = Interval::new(Instant::now(), Duration::from_millis(200));
 
-    let process = sink.send(start_msg).map_err(Error::from).and_then(|_| {
-        iter_ok(0..10)
-            .zip(interval)
-            .map_err(Error::from)
-            .and_then(|(i, _)| {
-                println!("Sending: {}", i);
+    let process = workers_fut
+        .join(sink_fut)
+        .join(sink2_fut)
+        .from_err()
+        .and_then(move |((workers, sink), sink2)| {
+            sink.send(start_msg).map_err(Error::from).and_then(|_| {
+                iter_ok(0..10)
+                    .zip(interval)
+                    .map_err(Error::from)
+                    .and_then(|(i, _)| {
+                        println!("Sending: {}", i);
 
-                let msg = format!("{}", i);
-                let msg = msg.as_bytes();
-                let msg = zmq::Message::from_slice(msg)?;
+                        let msg = format!("{}", i);
+                        let msg = msg.as_bytes();
+                        let msg = zmq::Message::from_slice(msg)?;
 
-                Ok(msg.into())
+                        Ok(msg.into())
+                    })
+                    .forward(workers.sink(25))
+                    .and_then(move |_| sink2.send(stop_msg).map_err(Error::from))
             })
-            .forward(workers.sink(25))
-            .and_then(move |_| sink2.send(stop_msg).map_err(Error::from))
-    });
+        });
 
     tokio::run(process.map(|_| ()).or_else(|e| {
         println!("Error: {:?}", e);

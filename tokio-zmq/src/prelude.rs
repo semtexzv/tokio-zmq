@@ -19,17 +19,16 @@
 
 //! Provide useful types and traits for working with Tokio ZMQ.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use futures::Stream;
-use zmq;
+use futures::{Future, Stream};
 
 pub use async_zmq_types::{
-    ControlHandler, Controllable, EndHandler, IntoInnerSocket, SinkSocket, SinkStreamSocket,
-    StreamSocket, WithEndHandler,
+    ControlHandler, Controllable, EndHandler, HasBuilder, IntoInnerSocket, SinkSocket,
+    SinkStreamSocket, StreamSocket, WithEndHandler,
 };
 
-use crate::{async_types::TimeoutStream, error::Error, socket::config::SocketBuilder};
+use crate::{async_types::TimeoutStream, error::Error};
 
 /* ----------------------------------TYPES----------------------------------- */
 
@@ -69,25 +68,6 @@ pub trait WithTimeout: Stream<Error = Error> + Sized {
     fn timeout(self, duration: Duration) -> TimeoutStream<Self>;
 }
 
-/// This trait is implemented by all socket types to allow custom builders to be created
-pub trait HasBuilder {
-    fn builder(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, Self>
-    where
-        Self: Sized,
-    {
-        SocketBuilder::new(ctx)
-    }
-}
-
-/* ----------------------------------impls----------------------------------- */
-
-impl<T> HasBuilder for T where T: IntoInnerSocket {}
-
-impl<T> WithTimeout for T
-where
-    T: Stream<Error = Error>,
-{
-    fn timeout(self, duration: Duration) -> TimeoutStream<Self> {
-        TimeoutStream::new(self, duration)
-    }
+pub trait Build<T>: Sized {
+    fn build(self) -> Box<dyn Future<Item = T, Error = Error> + Send>;
 }

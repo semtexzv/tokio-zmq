@@ -18,9 +18,9 @@
  */
 
 extern crate futures;
+extern crate tokio_zmq;
 extern crate tokio;
 extern crate tokio_timer;
-extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{
@@ -30,9 +30,9 @@ use std::{
 };
 
 use futures::{Future, Stream};
-use tokio_timer::{Error as TimerError, Interval};
 use tokio_zmq::prelude::*;
 use tokio_zmq::{Error as ZmqFutError, Pub};
+use tokio_timer::{Error as TimerError, Interval};
 
 #[derive(Debug)]
 enum Error {
@@ -68,17 +68,19 @@ impl From<TimerError> for Error {
 
 fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let zpub = Pub::builder(ctx).bind("tcp://*:5556").build().unwrap();
+    let zpub_fut = Pub::builder(ctx).bind("tcp://*:5556").build();
 
-    let producer = Interval::new(Instant::now(), Duration::from_secs(1))
-        .map_err(Error::from)
-        .and_then(|_| {
-            println!("Sending 'Hello'");
-            zmq::Message::from_slice(b"Hello")
-                .map_err(Error::from)
-                .map(|msg| msg.into())
-        })
-        .forward(zpub.sink(25));
+    let producer = zpub_fut.from_err().and_then(|zpub| {
+        Interval::new(Instant::now(), Duration::from_secs(1))
+            .map_err(Error::from)
+            .and_then(|_| {
+                println!("Sending 'Hello'");
+                zmq::Message::from_slice(b"Hello")
+                    .map_err(Error::from)
+                    .map(|msg| msg.into())
+            })
+            .forward(zpub.sink(25))
+    });
 
     tokio::run(producer.map(|_| ()).or_else(|e| {
         println!("Error in producer: {:?}", e);

@@ -19,10 +19,10 @@
 
 extern crate env_logger;
 extern crate futures;
+extern crate tokio_zmq;
 extern crate log;
 extern crate tokio;
 extern crate tokio_executor;
-extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{env, sync::Arc, thread};
@@ -43,37 +43,36 @@ impl ControlHandler for Stop {
 
 fn client() {
     let ctx = Arc::new(zmq::Context::new());
-    let req = Req::builder(Arc::clone(&ctx))
+    let req_fut = Req::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5559")
-        .build()
-        .unwrap();
+        .build();
 
-    let zpub = Pub::builder(Arc::clone(&ctx))
-        .bind("tcp://*:5561")
-        .build()
-        .unwrap();
+    let zpub_fut = Pub::builder(Arc::clone(&ctx)).bind("tcp://*:5561").build();
 
     println!("Sending 'Hewwo?' for 0");
-    let runner = req
-        .send(zmq::Message::from_slice(b"Hewwo?").unwrap().into())
+    let runner = req_fut
         .and_then(|req| {
-            let (sink, stream) = req.sink_stream(25).split();
+            req.send(zmq::Message::from_slice(b"Hewwo?").unwrap().into())
+                .and_then(|req| {
+                    let (sink, stream) = req.sink_stream(25).split();
 
-            stream
-                .zip(iter_ok(1..CLIENT_REQUESTS))
-                .map(|(multipart, request_nbr)| {
-                    for msg in multipart {
-                        if let Some(msg) = msg.as_str() {
-                            println!("Received reply {} {}", request_nbr, msg);
-                        }
-                    }
+                    stream
+                        .zip(iter_ok(1..CLIENT_REQUESTS))
+                        .map(|(multipart, request_nbr)| {
+                            for msg in multipart {
+                                if let Some(msg) = msg.as_str() {
+                                    println!("Received reply {} {}", request_nbr, msg);
+                                }
+                            }
 
-                    println!("Sending 'Hewwo?' for {}", request_nbr);
-                    zmq::Message::from_slice(b"Hewwo?").unwrap().into()
+                            println!("Sending 'Hewwo?' for {}", request_nbr);
+                            zmq::Message::from_slice(b"Hewwo?").unwrap().into()
+                        })
+                        .forward(sink)
                 })
-                .forward(sink)
         })
-        .and_then(move |(stream, _sink)| {
+        .join(zpub_fut)
+        .and_then(move |((stream, _sink), zpub)| {
             stream
                 .into_future()
                 .map_err(|(e, _)| e)
@@ -101,35 +100,35 @@ fn client() {
 fn worker() {
     let ctx = Arc::new(zmq::Context::new());
 
-    let rep = Rep::builder(Arc::clone(&ctx))
+    let rep_fut = Rep::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5560")
-        .build()
-        .unwrap();
+        .build();
 
-    let cmd = Sub::builder(Arc::clone(&ctx))
+    let cmd_fut = Sub::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5561")
         .filter(b"")
-        .build()
-        .unwrap();
+        .build();
 
-    let (rep_sink, rep_stream) = rep.sink_stream(25).split();
+    let runner = rep_fut.join(cmd_fut).and_then(|(rep, cmd)| {
+        let (rep_sink, rep_stream) = rep.sink_stream(25).split();
 
-    let runner = rep_stream
-        .controlled(cmd.stream(), Stop)
-        .map(|multipart| {
-            for msg in multipart {
-                if let Some(msg) = msg.as_str() {
-                    println!("Received request: {}", msg);
-                } else {
-                    println!("Received unparsable request: {:?}", msg);
+        rep_stream
+            .controlled(cmd.stream(), Stop)
+            .map(|multipart| {
+                for msg in multipart {
+                    if let Some(msg) = msg.as_str() {
+                        println!("Received request: {}", msg);
+                    } else {
+                        println!("Received unparsable request: {:?}", msg);
+                    }
                 }
-            }
 
-            let msg = zmq::Message::from_slice(b"Mr Obama???").unwrap();
+                let msg = zmq::Message::from_slice(b"Mr Obama???").unwrap();
 
-            msg.into()
-        })
-        .forward(rep_sink);
+                msg.into()
+            })
+            .forward(rep_sink)
+    });
 
     tokio::run(runner.map(|_| ()).or_else(|e| {
         println!("Error in worker: {:?}", e);
@@ -140,59 +139,62 @@ fn worker() {
 fn broker() {
     let ctx = Arc::new(zmq::Context::new());
 
-    let router = Router::builder(Arc::clone(&ctx))
+    let router_fut = Router::builder(Arc::clone(&ctx))
         .bind("tcp://*:5559")
-        .build()
-        .unwrap();
+        .build();
 
-    let dealer = Dealer::builder(Arc::clone(&ctx))
+    let dealer_fut = Dealer::builder(Arc::clone(&ctx))
         .bind("tcp://*:5560")
-        .build()
-        .unwrap();
+        .build();
 
-    let cmd1 = Sub::builder(Arc::clone(&ctx))
+    let cmd1_fut = Sub::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5561")
         .filter(b"")
-        .build()
-        .unwrap();
-    let cmd2 = Sub::builder(Arc::clone(&ctx))
+        .build();
+    let cmd2_fut = Sub::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5561")
         .filter(b"")
-        .build()
-        .unwrap();
+        .build();
 
-    let (dealer_sink, dealer_stream) = dealer.sink_stream(25).split();
-    let (router_sink, router_stream) = router.sink_stream(25).split();
+    let runner = dealer_fut
+        .join(router_fut)
+        .join(cmd1_fut.join(cmd2_fut))
+        .and_then(|((dealer, router), (cmd1, cmd2))| {
+            let (dealer_sink, dealer_stream) = dealer.sink_stream(25).split();
+            let (router_sink, router_stream) = router.sink_stream(25).split();
 
-    let d2r = dealer_stream
-        .controlled(cmd1.stream(), Stop)
-        .map(|multipart| {
-            for msg in &multipart {
-                if let Some(msg) = msg.as_str() {
-                    println!("Relaying message '{}' to router", msg);
-                } else {
-                    println!("Relaying unknown message to router");
-                }
-            }
-            multipart
-        })
-        .forward(router_sink);
+            let d2r = dealer_stream
+                .controlled(cmd1.stream(), Stop)
+                .map(|multipart| {
+                    for msg in &multipart {
+                        if let Some(msg) = msg.as_str() {
+                            println!("Relaying message '{}' to router", msg);
+                        } else {
+                            println!("Relaying unknown message to router");
+                        }
+                    }
+                    multipart
+                })
+                .forward(router_sink);
 
-    let r2d = router_stream
-        .controlled(cmd2.stream(), Stop)
-        .map(|multipart| {
-            for msg in &multipart {
-                if let Some(msg) = msg.as_str() {
-                    println!("Relaying message '{}' to dealer", msg);
-                } else {
-                    println!("Relaying unknown message to dealer");
-                }
-            }
-            multipart
-        })
-        .forward(dealer_sink);
+            let r2d = router_stream
+                .controlled(cmd2.stream(), Stop)
+                .map(|multipart| {
+                    for msg in &multipart {
+                        if let Some(msg) = msg.as_str() {
+                            println!("Relaying message '{}' to dealer", msg);
+                        } else {
+                            println!("Relaying unknown message to dealer");
+                        }
+                    }
+                    multipart
+                })
+                .forward(dealer_sink);
 
-    tokio::run(d2r.join(r2d).map(|_| ()).or_else(|e| {
+            d2r.join(r2d)
+        });
+
+    tokio::run(runner.map(|_| ()).or_else(|e| {
         println!("broker bailed: {:?}", e);
         Ok(())
     }));

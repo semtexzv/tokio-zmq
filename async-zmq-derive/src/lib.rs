@@ -55,12 +55,36 @@ pub fn socket_derive(input: TokenStream) -> TokenStream {
         }
     };
 
+    let pair = if format!("{}", name).to_lowercase() == "pair" {
+        quote! {
+            impl async_zmq_types::Pair for #name {}
+        }
+    } else {
+        quote! {
+            impl async_zmq_types::UnPair for #name {}
+        }
+    };
+
+    let sub = if format!("{}", name).to_lowercase() == "sub" {
+        quote! {
+            impl async_zmq_types::Sub for #name {}
+        }
+    } else {
+        quote!{}
+    };
+
+    let kind = Ident::new(&format!("{}", name).to_uppercase(), name.span());
+
     let as_socket = quote! {
         impl crate::prelude::IntoInnerSocket for #name {
             type Socket = Socket;
 
             fn socket(self) -> Self::Socket {
                 self.inner
+            }
+
+            fn kind() -> SocketType {
+                #kind
             }
         }
     };
@@ -83,6 +107,8 @@ pub fn socket_derive(input: TokenStream) -> TokenStream {
 
     let full = quote! {
         #from_sock
+        #sub
+        #pair
         #from_parts
         #as_socket
         #stream

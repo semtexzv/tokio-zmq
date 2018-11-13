@@ -19,7 +19,10 @@
 
 //! This module defines all the socket wrapper types that can be used with Tokio.
 
-use zmq;
+use zmq::{
+    self,
+    SocketType::{self, DEALER, PAIR, PUB, PULL, PUSH, REP, REQ, ROUTER, SUB, XPUB, XSUB},
+};
 
 use crate::{async_types::EventedFile, socket::Socket};
 

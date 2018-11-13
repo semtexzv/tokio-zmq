@@ -19,26 +19,14 @@
 
 //! Provide useful types and traits for working with Futures ZMQ.
 
-use std::sync::Arc;
-use zmq;
+use crate::error::Error;
 
 pub use async_zmq_types::{
-    ControlHandler, Controllable, EndHandler, IntoInnerSocket, SinkSocket, SinkStreamSocket,
-    StreamSocket, WithEndHandler,
+    ControlHandler, Controllable, EndHandler, HasBuilder, IntoInnerSocket, SinkSocket,
+    SinkStreamSocket, StreamSocket, WithEndHandler,
 };
+use futures::Future;
 
-use crate::socket::config::SocketBuilder;
-
-/// This trait is implemented by all socket types to allow custom builders to be created
-pub trait HasBuilder {
-    fn builder(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, Self>
-    where
-        Self: Sized,
-    {
-        SocketBuilder::new(ctx)
-    }
+pub trait Build<T>: Sized {
+    fn build(self) -> Box<dyn Future<Item = T, Error = Error> + Send>;
 }
-
-/* ----------------------------------impls----------------------------------- */
-
-impl<T> HasBuilder for T where T: IntoInnerSocket {}

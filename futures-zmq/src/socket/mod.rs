@@ -24,14 +24,11 @@ pub mod types;
 
 use std::sync::Arc;
 
-use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart};
+use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart, SocketBuilder};
 use zmq;
 
-use crate::{
-    async_types::{
-        MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream, MultipartStream,
-    },
-    socket::config::SocketBuilder,
+use crate::async_types::{
+    MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream, MultipartStream,
 };
 
 /// Defines the raw Socket type. This type should never be interacted with directly, except to
@@ -43,7 +40,10 @@ pub struct Socket {
 
 impl Socket {
     /// Start a new Socket Config builder
-    pub fn builder<T>(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, T> {
+    pub fn builder<T>(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, T>
+    where
+        T: IntoInnerSocket,
+    {
         SocketBuilder::new(ctx)
     }
 

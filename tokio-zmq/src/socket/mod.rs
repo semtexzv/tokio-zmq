@@ -24,7 +24,8 @@ pub mod types;
 
 use std::sync::Arc;
 
-use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart};
+use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart, SocketBuilder};
+use tokio_reactor::PollEvented;
 use zmq;
 
 use crate::{
@@ -32,7 +33,8 @@ use crate::{
         EventedFile, MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream,
         MultipartStream,
     },
-    socket::config::SocketBuilder,
+    error::Error,
+    file::ZmqFile,
 };
 
 /// Defines the raw Socket type. This type should never be interacted with directly, except to
@@ -46,7 +48,10 @@ pub struct Socket {
 
 impl Socket {
     /// Start a new Socket Config builder
-    pub fn builder<T>(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, T> {
+    pub fn builder<T>(ctx: Arc<zmq::Context>) -> SocketBuilder<'static, T>
+    where
+        T: IntoInnerSocket,
+    {
         SocketBuilder::new(ctx)
     }
 
@@ -61,6 +66,17 @@ impl Socket {
     /// unless you know what you're doing.
     pub fn from_sock_and_file(sock: zmq::Socket, file: EventedFile) -> Self {
         Socket { sock, file }
+    }
+
+    /// Create a new socket from a given Sock
+    ///
+    /// This assumes that `sock` is already configured properly. Please don't call this directly
+    /// unless you know what you're doing.
+    pub fn from_sock(sock: zmq::Socket) -> Result<Self, Error> {
+        let fd = sock.get_fd()?;
+        let file = PollEvented::new(ZmqFile::from_raw_fd(fd));
+
+        Ok(Socket { sock, file })
     }
 }
 

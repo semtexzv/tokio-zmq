@@ -19,9 +19,9 @@
 
 extern crate env_logger;
 extern crate futures;
+extern crate tokio_zmq;
 extern crate log;
 extern crate tokio;
-extern crate tokio_zmq;
 extern crate zmq;
 
 use std::sync::Arc;
@@ -44,25 +44,24 @@ fn main() {
     env_logger::init();
 
     let ctx = Arc::new(zmq::Context::new());
-    let req = Req::builder(ctx)
-        .connect("tcp://localhost:5560")
-        .build()
-        .unwrap();
+    let req_fut = Req::builder(ctx).connect("tcp://localhost:5560").build();
 
-    let runner = req.send(build_multipart(0)).and_then(|req| {
-        let (sink, stream) = req.sink_stream(25).split();
+    let runner = req_fut.and_then(|req| {
+        req.send(build_multipart(0)).and_then(|req| {
+            let (sink, stream) = req.sink_stream(25).split();
 
-        stream
-            .zip(iter_ok(1..10_000))
-            .map(|(multipart, i)| {
-                for msg in multipart {
-                    if let Some(msg) = msg.as_str() {
-                        println!("Received: {}", msg);
+            stream
+                .zip(iter_ok(1..10_000))
+                .map(|(multipart, i)| {
+                    for msg in multipart {
+                        if let Some(msg) = msg.as_str() {
+                            println!("Received: {}", msg);
+                        }
                     }
-                }
-                build_multipart(i)
-            })
-            .forward(sink)
+                    build_multipart(i)
+                })
+                .forward(sink)
+        })
     });
 
     tokio::run(runner.map(|_| ()).or_else(|e| {

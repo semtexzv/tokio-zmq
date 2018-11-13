@@ -18,8 +18,8 @@
  */
 
 extern crate futures;
-extern crate tokio;
 extern crate tokio_zmq;
+extern crate tokio;
 extern crate zmq;
 
 use std::sync::Arc;
@@ -29,20 +29,21 @@ use tokio_zmq::{prelude::*, Sub};
 
 fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let sub = Sub::builder(ctx)
+    let sub_fut = Sub::builder(ctx)
         .connect("tcp://localhost:5556")
         .filter(b"")
-        .build()
-        .unwrap();
+        .build();
 
-    let consumer = sub.stream().for_each(|multipart| {
-        for msg in multipart {
-            if let Some(msg) = msg.as_str() {
-                println!("Received: {}", msg);
+    let consumer = sub_fut.and_then(|sub| {
+        sub.stream().for_each(|multipart| {
+            for msg in multipart {
+                if let Some(msg) = msg.as_str() {
+                    println!("Received: {}", msg);
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     });
 
     tokio::run(consumer.map(|_| ()).or_else(|e| {

@@ -18,8 +18,8 @@
  */
 
 extern crate futures;
-extern crate tokio;
 extern crate tokio_zmq;
+extern crate tokio;
 extern crate zmq;
 
 use std::sync::Arc;
@@ -38,32 +38,32 @@ impl ControlHandler for Stop {
 
 fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let cmd = Sub::builder(Arc::clone(&ctx))
+    let cmd_fut = Sub::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5559")
         .filter(b"")
-        .build()
-        .unwrap();
-    let stream = Pull::builder(Arc::clone(&ctx))
+        .build();
+    let stream_fut = Pull::builder(Arc::clone(&ctx))
         .connect("tcp://localhost:5557")
-        .build()
-        .unwrap();
-    let sink = Push::builder(ctx)
-        .connect("tcp://localhost:5558")
-        .build()
-        .unwrap();
+        .build();
+    let sink_fut = Push::builder(ctx).connect("tcp://localhost:5558").build();
 
-    let runner = stream
-        .stream()
-        .controlled(cmd.stream(), Stop)
-        .map(|multipart| {
-            for msg in &multipart {
-                if let Some(msg) = msg.as_str() {
-                    println!("Relaying: {}", msg);
-                }
-            }
-            multipart
-        })
-        .forward(sink.sink(25));
+    let runner = cmd_fut
+        .join(stream_fut)
+        .join(sink_fut)
+        .and_then(|((cmd, stream), sink)| {
+            stream
+                .stream()
+                .controlled(cmd.stream(), Stop)
+                .map(|multipart| {
+                    for msg in &multipart {
+                        if let Some(msg) = msg.as_str() {
+                            println!("Relaying: {}", msg);
+                        }
+                    }
+                    multipart
+                })
+                .forward(sink.sink(25))
+        });
 
     tokio::run(runner.map(|_| ()).or_else(|e| {
         println!("Error!: {:?}", e);
