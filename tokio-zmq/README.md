@@ -1,10 +1,10 @@
 # Tokio ZMQ
-_This readme is for the 0.6 branch, for the 0.3 readme, look [here](https://git.asonix.dog/asonix/tokio-zmq/src/branch/v0.3.X)_
+_This readme is for the 0.7 branch, for the 0.3 readme, look [here](https://git.asonix.dog/asonix/tokio-zmq/src/branch/v0.3.X)_
 
 [documentation](https://docs.rs/tokio-zmq/)
 [crates.io](https://crates.io/crates/tokio-zmq)
 
-This crate contains wrappers around ZeroMQ Concepts with Futures.
+This crate contains wrappers around ZeroMQ Concepts with futures on Tokio's runtime.
 
 Currently Supported Sockets
  - REP
@@ -25,8 +25,8 @@ See the [examples folder](https://git.asonix.dog/asonix/async-zmq/src/branch/dev
 
 ```toml
 zmq = "0.8"
-tokio-zmq = "0.6.1"
-futures = "0.1.24"
+tokio-zmq = "0.7"
+futures = "0.1.25"
 tokio = "0.1"
 ```
 
@@ -39,19 +39,19 @@ use tokio_zmq::{prelude::*, Rep};
 
 fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let rep = Rep::builder(ctx)
-        .bind("tcp://*:5560")
-        .build()
-        .unwrap();
+    let rep_fut = Rep::builder(ctx).bind("tcp://*:5560").build();
 
-    let (sink, stream) = rep.sink_stream(25).split();
+    let runner = rep_fut.and_then(|rep| {
+        let (sink, stream) = rep.sink_stream(25).split();
 
-    let runner = stream
-        .map(|multipart| {
-            // handle the Multipart
-            // This example simply echos the incoming data back to the client.
-            multipart
-        }).forward(sink);
+        stream
+            .map(|multipart| {
+                // handle the Multipart
+                // This example simply echos the incoming data back to the client.
+                multipart
+            })
+            .forward(sink)
+    });
 
     tokio::run(runner.map(|_| ()).or_else(|e| {
         println!("Error: {:?}", e);

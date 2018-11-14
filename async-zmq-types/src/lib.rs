@@ -122,24 +122,24 @@ pub trait StreamSocket: IntoInnerSocket {
     /// use std::sync::Arc;
     ///
     /// use futures::Future;
-    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Multipart, Rep,
-    /// InnerSocket};
+    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Multipart, Rep};
     ///
     /// fn main() {
     ///     let context = Arc::new(zmq::Context::new());
-    ///     let rep = Rep::builder(context)
+    ///
+    ///     let fut = Rep::builder(context)
     ///         .connect("tcp://localhost:5568")
     ///         .build()
-    ///         .unwrap();
-    ///
-    ///     let fut = rep.recv().and_then(|(multipart, _)| {
-    ///         for msg in &multipart {
-    ///             if let Some(msg) = msg.as_str() {
-    ///                 println!("Message: {}", msg);
-    ///             }
-    ///         }
-    ///         Ok(multipart)
-    ///     });
+    ///         .and_then(|rep| {
+    ///             rep.recv().and_then(|(multipart, _)| {
+    ///                 for msg in &multipart {
+    ///                     if let Some(msg) = msg.as_str() {
+    ///                         println!("Message: {}", msg);
+    ///                     }
+    ///                 }
+    ///                 Ok(multipart)
+    ///             })
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -164,24 +164,24 @@ pub trait StreamSocket: IntoInnerSocket {
     /// use std::sync::Arc;
     ///
     /// use futures::{Future, Stream};
-    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Multipart, InnerSocket, Sub};
+    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Multipart, Sub};
     ///
     /// fn main() {
     ///     let context = Arc::new(zmq::Context::new());
-    ///     let sub = Sub::builder(context)
+    ///     let fut = Sub::builder(context)
     ///         .connect("tcp://localhost:5569")
     ///         .filter(b"")
     ///         .build()
-    ///         .unwrap();
-    ///
-    ///     let fut = sub.stream().for_each(|multipart| {
-    ///         for msg in multipart {
-    ///             if let Some(msg) = msg.as_str() {
-    ///                 println!("Message: {}", msg);
-    ///             }
-    ///         }
-    ///         Ok(())
-    ///     });
+    ///         .and_then(|sub| {
+    ///             sub.stream().for_each(|multipart| {
+    ///                 for msg in multipart {
+    ///                     if let Some(msg) = msg.as_str() {
+    ///                         println!("Message: {}", msg);
+    ///                     }
+    ///                 }
+    ///                 Ok(())
+    ///             })
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -209,18 +209,15 @@ pub trait SinkSocket: IntoInnerSocket {
     /// use std::sync::Arc;
     ///
     /// use futures::Future;
-    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Pub, InnerSocket};
+    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Pub};
     ///
     /// fn main() {
     ///     let context = Arc::new(zmq::Context::new());
-    ///     let zpub = Pub::builder(context)
+    ///     let msg = zmq::Message::from_slice(b"Hello").unwrap();
+    ///     let fut = Pub::builder(context)
     ///         .connect("tcp://localhost:5569")
     ///         .build()
-    ///         .unwrap();
-    ///
-    ///     let msg = zmq::Message::from_slice(b"Hello").unwrap();
-    ///
-    ///     let fut = zpub.send(msg.into());
+    ///         .and_then(|zpub| zpub.send(msg.into()));
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -250,22 +247,21 @@ pub trait SinkSocket: IntoInnerSocket {
     /// use std::sync::Arc;
     ///
     /// use futures::{Future, Stream, stream::iter_ok};
-    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Multipart, Pub,
-    /// InnerSocket};
+    /// use tokio_zmq::{prelude::*, async_types::MultipartStream, Error, Multipart, Pub};
     ///
     /// fn main() {
     ///     let context = Arc::new(zmq::Context::new());
-    ///     let zpub = Pub::builder(context)
+    ///     let fut = Pub::builder(context)
     ///         .connect("tcp://localhost:5570")
     ///         .build()
-    ///         .unwrap();
-    ///
-    ///     let fut = iter_ok(0..5)
-    ///         .and_then(|i| {
-    ///             let msg = zmq::Message::from_slice(format!("i: {}", i).as_bytes())?;
-    ///             Ok(msg.into()) as Result<Multipart, Error>
-    ///         })
-    ///         .forward(zpub.sink(25));
+    ///         .and_then(|zpub| {
+    ///             iter_ok(0..5)
+    ///                 .and_then(|i| {
+    ///                     let msg = zmq::Message::from_slice(format!("i: {}", i).as_bytes())?;
+    ///                     Ok(msg.into()) as Result<Multipart, Error>
+    ///                 })
+    ///                 .forward(zpub.sink(25))
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -297,18 +293,18 @@ pub trait SinkStreamSocket: IntoInnerSocket {
     /// use std::sync::Arc;
     ///
     /// use futures::{Future, Stream};
-    /// use tokio_zmq::{prelude::*, InnerSocket, Rep};
+    /// use tokio_zmq::{prelude::*, Rep};
     ///
     /// fn main() {
     ///     let ctx = Arc::new(zmq::Context::new());
-    ///     let rep = Rep::builder(ctx)
+    ///     let fut = Rep::builder(ctx)
     ///         .bind("tcp://*:5571")
     ///         .build()
-    ///         .unwrap();
+    ///         .and_then(|rep| {
+    ///             let (sink, stream) = rep.sink_stream(25).split();
     ///
-    ///     let (sink, stream) = rep.sink_stream(25).split();
-    ///
-    ///     let fut = stream.forward(sink);
+    ///             stream.forward(sink)
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -335,7 +331,7 @@ pub trait WithEndHandler: Stream<Item = Multipart> + Sized {
     /// use std::sync::Arc;
     ///
     /// use futures::{Future, Stream};
-    /// use tokio_zmq::{prelude::*, InnerSocket, Sub, Multipart};
+    /// use tokio_zmq::{prelude::*, Sub, Multipart};
     ///
     /// struct End(u32);
     ///
@@ -349,13 +345,15 @@ pub trait WithEndHandler: Stream<Item = Multipart> + Sized {
     ///
     /// fn main() {
     ///     let ctx = Arc::new(zmq::Context::new());
-    ///     let sub = Sub::builder(ctx)
+    ///     let fut = Sub::builder(ctx)
     ///         .bind("tcp://*:5571")
     ///         .filter(b"")
     ///         .build()
-    ///         .unwrap();
-    ///
-    ///     let fut = sub.stream().with_end_handler(End(0));
+    ///         .and_then(|sub| {
+    ///             sub.stream()
+    ///                 .with_end_handler(End(0))
+    ///                 .for_each(|_| Ok(()))
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -383,7 +381,7 @@ pub trait Controllable: Stream<Item = Multipart> + Sized {
     /// use std::sync::Arc;
     ///
     /// use futures::{Future, Stream};
-    /// use tokio_zmq::{prelude::*, InnerSocket, Pull, Sub, Multipart};
+    /// use tokio_zmq::{prelude::*, Pull, Sub, Multipart};
     ///
     /// struct End;
     ///
@@ -395,18 +393,22 @@ pub trait Controllable: Stream<Item = Multipart> + Sized {
     ///
     /// fn main() {
     ///     let ctx = Arc::new(zmq::Context::new());
-    ///     let pull = Pull::builder(Arc::clone(&ctx))
+    ///     let init_pull = Pull::builder(Arc::clone(&ctx))
     ///         .bind("tcp://*:5572")
-    ///         .build()
-    ///         .unwrap();
+    ///         .build();
     ///
-    ///     let sub = Sub::builder(ctx)
+    ///     let init_sub = Sub::builder(ctx)
     ///         .bind("tcp://*:5573")
     ///         .filter(b"")
-    ///         .build()
-    ///         .unwrap();
+    ///         .build();
     ///
-    ///     let fut = pull.stream().controlled(sub.stream(), End);
+    ///     let fut = init_pull
+    ///         .join(init_sub)
+    ///         .and_then(|(pull, sub)| {
+    ///             pull.stream()
+    ///                 .controlled(sub.stream(), End)
+    ///                 .for_each(|_| Ok(()))
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -447,6 +449,7 @@ pub trait HasBuilder: IntoInnerSocket {
 }
 
 /* ----------------------------------impls----------------------------------- */
+
 impl<T> HasBuilder for T where T: IntoInnerSocket {}
 
 impl<T> SinkStreamSocket for T
@@ -484,8 +487,7 @@ where
     ) -> ControlledStream<H, S, Self, Self::Error>
     where
         H: ControlHandler,
-        S: Stream<Item = Multipart>,
-        Self: Stream<Item = Multipart, Error = S::Error>,
+        S: Stream<Item = Multipart, Error = T::Error>,
     {
         ControlledStream::new(self, control_stream, handler)
     }

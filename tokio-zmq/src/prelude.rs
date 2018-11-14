@@ -51,13 +51,15 @@ pub trait WithTimeout: Stream<Error = Error> + Sized {
     ///
     /// fn main() {
     ///     let ctx = Arc::new(zmq::Context::new());
-    ///     let pull = Pull::builder(ctx)
+    ///     let fut = Pull::builder(ctx)
     ///         .bind("tcp://*:5574")
     ///         .build()
-    ///         .unwrap();
-    ///
-    ///     // Receive a Timeout after 30 seconds if the stream hasn't produced a value
-    ///     let fut = pull.stream().timeout(Duration::from_secs(30));
+    ///         .and_then(|pull| {
+    ///             // Receive a Timeout after 30 seconds if the stream hasn't produced a value
+    ///             pull.stream()
+    ///                 .timeout(Duration::from_secs(30))
+    ///                 .for_each(|_| Ok(()))
+    ///         });
     ///
     ///     // tokio::run(fut.map(|_| ()).or_else(|e| {
     ///     //     println!("Error: {}", e);
@@ -70,4 +72,15 @@ pub trait WithTimeout: Stream<Error = Error> + Sized {
 
 pub trait Build<T>: Sized {
     fn build(self) -> Box<dyn Future<Item = T, Error = Error> + Send>;
+}
+
+/* ----------------------------------impls----------------------------------- */
+
+impl<T> WithTimeout for T
+where
+    T: Stream<Error = Error>,
+{
+    fn timeout(self, duration: Duration) -> TimeoutStream<Self> {
+        TimeoutStream::new(self, duration)
+    }
 }

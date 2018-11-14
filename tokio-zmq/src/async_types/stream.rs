@@ -44,26 +44,23 @@ use crate::{
 ///
 /// use std::sync::Arc;
 ///
-/// use futures::Stream;
+/// use futures::{Future, Stream};
 /// use tokio_zmq::{async_types::MultipartStream, prelude::*, Error, Multipart, Socket, Sub};
-///
-/// fn get_stream(socket: Socket) -> impl Stream<Item = Multipart, Error = Error> {
-///     socket.stream().and_then(|multipart| {
-///         // handle multipart
-///         Ok(multipart)
-///     })
-/// }
 ///
 /// fn main() {
 ///     let context = Arc::new(zmq::Context::new());
-///     let socket = Sub::builder(context)
+///     let fut = Sub::builder(context)
 ///         .connect("tcp://localhost:5568")
 ///         .filter(b"")
 ///         .build()
-///         .unwrap()
-///         .socket();
-///
-///     get_stream(socket);
+///         .and_then(|sub| {
+///             sub.stream()
+///                 .and_then(|multipart| {
+///                     // handle multipart
+///                     Ok(multipart)
+///                 })
+///                 .for_each(|_| Ok(()))
+///         });
 /// }
 /// ```
 pub struct MultipartStream {

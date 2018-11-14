@@ -37,7 +37,6 @@ use crate::{
 
 /// The `MultipartRequest` Future handles asynchronously sending data to a socket.
 ///
-/// You shouldn't ever need to manually create one, but if you do, the following will suffice.
 /// ### Example
 /// ```rust
 /// # extern crate zmq;
@@ -56,15 +55,17 @@ use crate::{
 /// #     let ctx = Arc::new(zmq::Context::new());
 /// #     let rep = Rep::builder(ctx)
 /// #         .bind("tcp://*:5567")
-/// #         .build()
-/// #         .unwrap();
-/// #     let socket = rep.socket();
-/// #     let (sock, file) = socket.inner();
-/// #     let msg = zmq::Message::from_slice(format!("Hey").as_bytes()).unwrap();
-/// MultipartRequest::new(sock, file, msg.into()).and_then(|(_, _)| {
+/// #         .build();
+/// #
+/// #     rep.and_then(|rep| {
+/// #       let socket = rep.socket();
+/// #       let (sock, file) = socket.inner();
+/// #       let msg = zmq::Message::from_slice(format!("Hey").as_bytes()).unwrap();
+/// MultipartRequest::new(sock, file, msg.into()).and_then(|_: Rep| {
 ///     // succesfull request
-///     # Ok(())
+/// #       Ok(())
 /// })
+/// # })
 /// # }
 /// ```
 pub struct MultipartRequest<T>
@@ -114,7 +115,6 @@ where
 
 /// The `MultipartResponse` Future handles asynchronously getting data from a socket.
 ///
-/// You shouldn't ever need to manually create one, but if you do, the following will suffice.
 /// ### Example
 /// ```rust
 /// # extern crate zmq;
@@ -133,14 +133,15 @@ where
 /// #     let ctx = Arc::new(zmq::Context::new());
 /// #     let rep = Rep::builder(ctx)
 /// #         .bind("tcp://*:5567")
-/// #         .build()
-/// #         .unwrap();
-/// #     let socket = rep.socket();
-/// #     let (sock, file) = socket.inner();
-/// MultipartResponse::new(sock, file).and_then(|(multipart, (_, _))| {
+/// #         .build();
+/// #     rep.and_then(|rep| {
+/// #         let socket = rep.socket();
+/// #         let (sock, file) = socket.inner();
+/// MultipartResponse::new(sock, file).and_then(|(multipart, _): (_, Rep)| {
 ///     // handle multipart response
 ///     # Ok(multipart)
 /// })
+/// # })
 /// # }
 /// ```
 pub struct MultipartResponse<T>

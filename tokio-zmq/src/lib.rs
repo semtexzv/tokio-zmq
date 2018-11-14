@@ -55,25 +55,29 @@
 //!     // Note that the variable is named zpub, since pub is a keyword
 //!     let zpub = Pub::builder(Arc::clone(&context))
 //!         .bind("tcp://*:5561")
-//!         .build()?;
+//!         .build();
 //!
 //!     let sub = Sub::builder(context)
 //!         .bind("tcp://*:5562")
 //!         .filter(b"")
-//!         .build()?;
+//!         .build();
 //!
 //!     // Create our simple server. This forwards messages from the Subscriber socket to the
 //!     // Publisher socket, and prints them as they go by.
-//!     let runner = sub.stream()
-//!         .map(|multipart| {
-//!             for msg in &multipart {
-//!                 if let Some(msg) = msg.as_str() {
-//!                     println!("Forwarding: {}", msg);
-//!                 }
-//!             }
-//!             multipart
-//!         })
-//!         .forward(zpub.sink(25));
+//!     let runner = zpub
+//!         .join(sub)
+//!         .and_then(|(zpub, sub)| {
+//!             sub.stream()
+//!                 .map(|multipart| {
+//!                     for msg in &multipart {
+//!                         if let Some(msg) = msg.as_str() {
+//!                             println!("Forwarding: {}", msg);
+//!                         }
+//!                     }
+//!                     multipart
+//!                 })
+//!                 .forward(zpub.sink(25))
+//!         });
 //!
 //!     // To avoid an infinte doctest, the actual tokio::run is commented out.
 //!     // tokio::run(runner.map(|_| ()).or_else(|e| {

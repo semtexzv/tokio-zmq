@@ -46,22 +46,20 @@ use crate::{
 /// use futures::{Future, Sink};
 /// use tokio_zmq::{prelude::*, Error, Multipart, Pub, Socket};
 ///
-/// fn get_sink(socket: Socket) -> impl Sink<SinkItem = Multipart, SinkError = Error> {
-///     socket.sink(25)
-/// }
-///
 /// fn main() {
 ///     let context = Arc::new(zmq::Context::new());
-///     let socket = Pub::builder(context)
+///     let fut = Pub::builder(context)
 ///         .bind("tcp://*:5568")
 ///         .build()
-///         .unwrap()
-///         .socket();
-///     let sink = get_sink(socket);
+///         .and_then(|zpub| {
+///             let sink = zpub.sink(25);
 ///
-///     let msg = zmq::Message::from_slice(b"Some message");
+///             let msg = zmq::Message::from_slice(b"Some message").unwrap();
 ///
-///     // tokio::run(sink.send(msg.into())).unwrap();
+///             sink.send(msg.into())
+///         });
+///
+///     // tokio::run(fut.map(|_| ()).map_err(|_| ()));
 /// }
 /// ```
 pub struct MultipartSink {

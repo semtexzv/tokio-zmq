@@ -34,9 +34,6 @@ use crate::{
 /// The `MultipartSinkStream` handles sending and receiving streams of data to and from ZeroMQ
 /// Sockets.
 ///
-/// You shouldn't ever need to manually create one. Here's how to get one from a 'raw' `Socket`'
-/// type.
-///
 /// ### Example
 /// ```rust
 /// extern crate zmq;
@@ -49,24 +46,20 @@ use crate::{
 /// use futures::{Future, Sink, Stream};
 /// use tokio_zmq::{prelude::*, Error, Multipart, Rep, Socket};
 ///
-/// fn get_sink_stream(socket: Socket) -> impl Sink<SinkItem = Multipart, SinkError = Error> + Stream<Item = Multipart, Error = Error>
-/// {
-///     socket.sink_stream(25)
-/// }
-///
 /// fn main() {
 ///     let context = Arc::new(zmq::Context::new());
-///     let socket = Rep::builder(context)
+///     let fut = Rep::builder(context)
 ///         .bind("tcp://*:5575")
 ///         .build()
-///         .unwrap()
-///         .socket();
+///         .and_then(|rep| {
+///             let sink_stream = rep.sink_stream(25);
 ///
-///     let sink_stream = get_sink_stream(socket);
+///             let (sink, stream) = sink_stream.split();
 ///
-///     let (sink, stream) = sink_stream.split();
+///             stream.forward(sink)
+///         });
 ///
-///     // tokio::run(stream.forward(sink));
+///     // tokio::run(fut.map(|_| ()).map_err(|_| ()));
 /// }
 /// ```
 pub struct MultipartSinkStream {

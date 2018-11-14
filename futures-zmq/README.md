@@ -5,52 +5,70 @@
 
 This crate contains wrappers around ZeroMQ Concepts with Futures.
 
+Currently Supported Sockets
+ - REP
+ - REQ
+ - PUB
+ - SUB
+ - PUSH
+ - PULL
+ - XPUB
+ - XSUB
+ - PAIR
+ - DEALER
+ - ROUTER
+
 See the [examples folder](https://git.asonix.dog/asonix/async-zmq/src/branch/development/futures-zmq/examples) for usage examples.
+
+NOTE: These examples use Tokio, but this crate does not require tokio's runtime. Any futures executor should work.
 
 ### Getting Started
 
 ```toml
+zmq = "0.8"
 futures-zmq = "0.1"
 futures = "0.1.25"
-zmq = "0.8"
+tokio = "0.1"
 ```
 
 In your application:
 ```rust
 use std::sync::Arc;
 
-use futures::Future;
-use futures_zmq::{Error, MultipartRequest, MultipartResponse};
-use zmq::{Context, Socket, SocketType};
+use futures::{Future, Stream};
+use futures_zmq::{prelude::*, Rep};
 
-fn main() -> Result<(), Error> {
+fn main() {
     let ctx = Arc::new(zmq::Context::new());
-    let rep = Rep::builder(ctx).bind("tcp://*:5560").build()?;
+    let rep_fut = Rep::builder(ctx).bind("tcp://*:5560").build();
 
-    let (sink, stream) = rep.sink_stream(25).split();
+    let runner = rep_fut.and_then(|rep| {
+        let (sink, stream) = rep.sink_stream(25).split();
 
-    let runner = stream
-        .map(|multipart| {
-            for msg in &multipart {
-                if let Some(s) = msg.as_str() {
-                    println!("RECEIVED: {}", s);
-                }
-            }
-            multipart
-        })
-        .forward(sink);
+        stream
+            .map(|multipart| {
+                // handle the Multipart
+                // This example simply echos the incoming data back to the client.
+                multipart
+            })
+            .forward(sink)
+    });
 
     tokio::run(runner.map(|_| ()).or_else(|e| {
         println!("Error: {:?}", e);
         Ok(())
     }));
-
-    Ok(())
 }
 ```
 
 ### Running the examples
 The `req.rs` and `rep.rs` examples are designed to be used together. The `rep` example starts a server with a REP socket, and the `req` example queries that server with a REQ socket.
+
+The `zpub.rs` and `sub.rs` examples should be used togheter. `zpub` produces values that `sub` consumes.
+
+The `push.rs`, `pull_push.rs`, and `pull.rs` files should be used together. `push` produces values, which are relayed by `pull_push` to `pull`, which consumes them and sends a stop signal to itself and to `pull_push`.
+
+`sync_pubsub.rs`, `dealer_router.rs`, and `load_balancing_broker` are all self-contained, and spawn multiple threads.
 
 
 ### Contributing
