@@ -22,10 +22,10 @@ use std::{collections::VecDeque, marker::PhantomData, mem};
 use async_zmq_types::Multipart;
 use futures::{Async, AsyncSink, Future, Sink};
 
-use crate::{async_types::MultipartRequest, error::Error, socket::Socket};
+use crate::{async_types::MultipartRequest, error::Error, poll_thread::SockId, socket::Socket};
 
 enum SinkState {
-    Pending,
+    Pending(SockId),
     Running(MultipartRequest<Socket>),
     Polling,
 }
@@ -37,16 +37,15 @@ impl SinkState {
 
     fn poll_fut(
         &mut self,
-        sock: usize,
         mut fut: MultipartRequest<Socket>,
         multiparts: &mut VecDeque<Multipart>,
         buffer_size: usize,
     ) -> Result<Async<()>, Error> {
-        if let Async::Ready(_) = fut.poll()? {
-            *self = SinkState::Pending;
+        if let Async::Ready(sock) = fut.poll()? {
+            *self = SinkState::Pending(sock.inner());
 
             if !multiparts.is_empty() {
-                self.poll_flush(sock, multiparts, buffer_size)
+                self.poll_flush(multiparts, buffer_size)
             } else {
                 Ok(Async::Ready(()))
             }
@@ -59,21 +58,20 @@ impl SinkState {
 
     fn poll_flush(
         &mut self,
-        sock: usize,
         multiparts: &mut VecDeque<Multipart>,
         buffer_size: usize,
     ) -> Result<Async<()>, Error> {
         match self.polling() {
-            SinkState::Pending => {
+            SinkState::Pending(sock) => {
                 if let Some(multipart) = multiparts.pop_front() {
                     let fut = MultipartRequest::new_with_buffer_size(sock, multipart, buffer_size);
 
-                    self.poll_fut(sock, fut, multiparts, buffer_size)
+                    self.poll_fut(fut, multiparts, buffer_size)
                 } else {
                     Ok(Async::Ready(()))
                 }
             }
-            SinkState::Running(fut) => self.poll_fut(sock, fut, multiparts, buffer_size),
+            SinkState::Running(fut) => self.poll_fut(fut, multiparts, buffer_size),
             SinkState::Polling => {
                 error!("Called polling while polling");
                 return Err(Error::Polling);
@@ -83,13 +81,12 @@ impl SinkState {
 
     fn start_send(
         &mut self,
-        sock: usize,
         multiparts: &mut VecDeque<Multipart>,
         buffer_size: usize,
         multipart: Multipart,
     ) -> Result<AsyncSink<Multipart>, Error> {
         if multiparts.len() >= 1 {
-            if let Async::NotReady = self.poll_flush(sock, multiparts, buffer_size)? {
+            if let Async::NotReady = self.poll_flush(multiparts, buffer_size)? {
                 if multiparts.len() >= 1 {
                     return Ok(AsyncSink::NotReady(multipart));
                 }
@@ -106,7 +103,6 @@ where
     T: From<Socket>,
 {
     state: SinkState,
-    sock: usize,
     multiparts: VecDeque<Multipart>,
     buffer_size: usize,
     phantom: PhantomData<T>,
@@ -116,10 +112,9 @@ impl<T> MultipartSink<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: usize, buffer_size: usize) -> Self {
+    pub fn new(sock: SockId, buffer_size: usize) -> Self {
         MultipartSink {
-            state: SinkState::Pending,
-            sock,
+            state: SinkState::Pending(sock),
             multiparts: VecDeque::new(),
             buffer_size,
             phantom: PhantomData,
@@ -139,11 +134,11 @@ where
         multipart: Self::SinkItem,
     ) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
         self.state
-            .start_send(self.sock, &mut self.multiparts, self.buffer_size, multipart)
+            .start_send(&mut self.multiparts, self.buffer_size, multipart)
     }
 
     fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
         self.state
-            .poll_flush(self.sock, &mut self.multiparts, self.buffer_size)
+            .poll_flush(&mut self.multiparts, self.buffer_size)
     }
 }

@@ -22,11 +22,11 @@ use std::{marker::PhantomData, mem};
 use async_zmq_types::Multipart;
 use futures::{Async, Future};
 
-use crate::{error::Error, socket::Socket, RecvFuture, SendFuture, SESSION};
+use crate::{error::Error, poll_thread::SockId, socket::Socket, RecvFuture, SendFuture, SESSION};
 
 enum SendState {
-    Pending(Multipart),
-    Running(SendFuture),
+    Pending(Multipart, SockId),
+    Running(SendFuture, SockId),
     Polling,
 }
 
@@ -35,7 +35,7 @@ impl SendState {
         mem::replace(self, SendState::Polling)
     }
 
-    fn poll_fut<T>(&mut self, sock: usize, mut fut: SendFuture) -> Result<Async<T>, Error>
+    fn poll_fut<T>(&mut self, sock: SockId, mut fut: SendFuture) -> Result<Async<T>, Error>
     where
         T: From<Socket>,
     {
@@ -43,30 +43,30 @@ impl SendState {
             match opt {
                 None => Ok(Async::Ready(Socket::from_sock(sock).into())),
                 Some(multipart) => {
-                    *self = SendState::Pending(multipart);
+                    *self = SendState::Pending(multipart, sock);
 
                     Ok(Async::NotReady)
                 }
             }
         } else {
-            *self = SendState::Running(fut);
+            *self = SendState::Running(fut, sock);
 
             Ok(Async::NotReady)
         }
     }
 
-    fn poll_flush<T>(&mut self, sock: usize, buffer_size: usize) -> Result<Async<T>, Error>
+    fn poll_flush<T>(&mut self, buffer_size: usize) -> Result<Async<T>, Error>
     where
         T: From<Socket>,
     {
         match self.polling() {
-            SendState::Pending(multipart) => {
+            SendState::Pending(multipart, sock) => {
                 trace!("Sending {:?}", multipart);
-                let fut = SESSION.send(sock, multipart, buffer_size);
+                let fut = SESSION.send(&sock, multipart, buffer_size);
 
                 self.poll_fut(sock, fut)
             }
-            SendState::Running(fut) => self.poll_fut(sock, fut),
+            SendState::Running(fut, sock) => self.poll_fut(sock, fut),
             SendState::Polling => {
                 error!("Called polling while polling");
                 return Err(Error::Polling);
@@ -80,7 +80,6 @@ where
     T: From<Socket>,
 {
     state: SendState,
-    sock: usize,
     buffer_size: usize,
     phantom: PhantomData<T>,
 }
@@ -89,14 +88,13 @@ impl<T> MultipartRequest<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: usize, multipart: Multipart) -> Self {
+    pub fn new(sock: SockId, multipart: Multipart) -> Self {
         Self::new_with_buffer_size(sock, multipart, 1)
     }
 
-    pub fn new_with_buffer_size(sock: usize, multipart: Multipart, buffer_size: usize) -> Self {
+    pub fn new_with_buffer_size(sock: SockId, multipart: Multipart, buffer_size: usize) -> Self {
         MultipartRequest {
-            state: SendState::Pending(multipart),
-            sock,
+            state: SendState::Pending(multipart, sock),
             buffer_size,
             phantom: PhantomData,
         }
@@ -111,13 +109,13 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
-        self.state.poll_flush(self.sock, self.buffer_size)
+        self.state.poll_flush(self.buffer_size)
     }
 }
 
 enum RecvState {
-    Pending,
-    Running(RecvFuture),
+    Pending(SockId),
+    Running(RecvFuture, SockId),
     Polling,
 }
 
@@ -128,7 +126,7 @@ impl RecvState {
 
     fn poll_fut<T>(
         &mut self,
-        sock: usize,
+        sock: SockId,
         mut fut: RecvFuture,
     ) -> Result<Async<(Multipart, T)>, Error>
     where
@@ -138,23 +136,23 @@ impl RecvState {
             trace!("Received {:?}", multipart);
             Ok(Async::Ready((multipart, Socket::from_sock(sock).into())))
         } else {
-            *self = RecvState::Running(fut);
+            *self = RecvState::Running(fut, sock);
 
             Ok(Async::NotReady)
         }
     }
 
-    fn poll_fetch<T>(&mut self, sock: usize) -> Result<Async<(Multipart, T)>, Error>
+    fn poll_fetch<T>(&mut self) -> Result<Async<(Multipart, T)>, Error>
     where
         T: From<Socket>,
     {
         match self.polling() {
-            RecvState::Pending => {
-                let fut = SESSION.recv(sock);
+            RecvState::Pending(sock) => {
+                let fut = SESSION.recv(&sock);
 
                 self.poll_fut(sock, fut)
             }
-            RecvState::Running(fut) => self.poll_fut(sock, fut),
+            RecvState::Running(fut, sock) => self.poll_fut(sock, fut),
             RecvState::Polling => {
                 error!("Called polling while polling");
                 return Err(Error::Polling);
@@ -168,7 +166,6 @@ where
     T: From<Socket>,
 {
     state: RecvState,
-    sock: usize,
     phantom: PhantomData<T>,
 }
 
@@ -176,10 +173,9 @@ impl<T> MultipartResponse<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: usize) -> Self {
+    pub fn new(sock: SockId) -> Self {
         MultipartResponse {
-            state: RecvState::Pending,
-            sock,
+            state: RecvState::Pending(sock),
             phantom: PhantomData,
         }
     }
@@ -193,6 +189,6 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
-        self.state.poll_fetch(self.sock)
+        self.state.poll_fetch()
     }
 }

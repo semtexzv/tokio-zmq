@@ -25,13 +25,14 @@ use futures::{Async, AsyncSink, Future, Sink, Stream};
 use crate::{
     async_types::{MultipartRequest, MultipartResponse},
     error::Error,
+    poll_thread::SockId,
     socket::Socket,
 };
 
 enum SinkStreamState {
-    Pending,
-    Streaming(MultipartResponse<Socket>),
-    Sinking(MultipartRequest<Socket>),
+    Pending(SockId, SockId),
+    Streaming(MultipartResponse<Socket>, SockId),
+    Sinking(MultipartRequest<Socket>, SockId),
     Both(MultipartResponse<Socket>, MultipartRequest<Socket>),
     Polling,
 }
@@ -41,93 +42,65 @@ impl SinkStreamState {
         mem::replace(self, SinkStreamState::Polling)
     }
 
-    fn poll_sink(
-        &mut self,
-        sock: usize,
-        mut sinking: MultipartRequest<Socket>,
-        multiparts: &mut VecDeque<Multipart>,
-    ) -> Result<Async<()>, Error> {
-        if let Async::Ready(_) = sinking.poll()? {
-            match self.polling() {
-                SinkStreamState::Streaming(streaming) => {
-                    *self = SinkStreamState::Streaming(streaming);
-                }
-                _ => *self = SinkStreamState::Pending,
-            }
-
-            if !multiparts.is_empty() {
-                self.poll_flush(sock, multiparts)
-            } else {
-                Ok(Async::Ready(()))
-            }
-        } else {
-            match self.polling() {
-                SinkStreamState::Streaming(streaming) => {
-                    *self = SinkStreamState::Both(streaming, sinking);
-                }
-                _ => {
-                    *self = SinkStreamState::Sinking(sinking);
-                }
-            }
-
-            Ok(Async::NotReady)
-        }
-    }
-
-    fn poll_stream(
-        &mut self,
-        mut streaming: MultipartResponse<Socket>,
-    ) -> Result<Async<Option<Multipart>>, Error> {
-        if let Async::Ready((msg, _)) = streaming.poll()? {
-            match self.polling() {
-                SinkStreamState::Sinking(sinking) => *self = SinkStreamState::Sinking(sinking),
-                _ => *self = SinkStreamState::Pending,
-            }
-
-            Ok(Async::Ready(Some(msg)))
-        } else {
-            match self.polling() {
-                SinkStreamState::Sinking(sinking) => {
-                    *self = SinkStreamState::Both(streaming, sinking)
-                }
-                _ => *self = SinkStreamState::Streaming(streaming),
-            }
-
-            Ok(Async::NotReady)
-        }
-    }
-
-    fn poll_flush(
-        &mut self,
-        sock: usize,
-        multiparts: &mut VecDeque<Multipart>,
-    ) -> Result<Async<()>, Error> {
+    fn poll_flush(&mut self, multiparts: &mut VecDeque<Multipart>) -> Result<Async<()>, Error> {
         match self.polling() {
-            SinkStreamState::Pending => {
+            SinkStreamState::Pending(sock1, sock2) => {
                 if let Some(multipart) = multiparts.pop_front() {
-                    let sinking = MultipartRequest::new(sock, multipart);
+                    let mut sinking: MultipartRequest<Socket> =
+                        MultipartRequest::new(sock1, multipart);
 
-                    self.poll_sink(sock, sinking, multiparts)
+                    match sinking.poll()? {
+                        Async::Ready(sock) => {
+                            *self = SinkStreamState::Pending(sock.inner(), sock2);
+                            Ok(Async::Ready(()))
+                        }
+                        Async::NotReady => {
+                            *self = SinkStreamState::Sinking(sinking, sock2);
+                            Ok(Async::NotReady)
+                        }
+                    }
                 } else {
-                    *self = SinkStreamState::Pending;
-
+                    *self = SinkStreamState::Pending(sock1, sock2);
                     Ok(Async::Ready(()))
                 }
             }
-            SinkStreamState::Both(streaming, sinking) => {
-                *self = SinkStreamState::Streaming(streaming);
-
-                self.poll_sink(sock, sinking, multiparts)
-            }
-            SinkStreamState::Sinking(sinking) => self.poll_sink(sock, sinking, multiparts),
-            SinkStreamState::Streaming(streaming) => {
-                *self = SinkStreamState::Streaming(streaming);
-
+            SinkStreamState::Both(streaming, mut sinking) => match sinking.poll()? {
+                Async::Ready(sock) => {
+                    *self = SinkStreamState::Streaming(streaming, sock.inner());
+                    Ok(Async::Ready(()))
+                }
+                Async::NotReady => {
+                    *self = SinkStreamState::Both(streaming, sinking);
+                    Ok(Async::NotReady)
+                }
+            },
+            SinkStreamState::Sinking(mut sinking, sock2) => match sinking.poll()? {
+                Async::Ready(sock) => {
+                    *self = SinkStreamState::Pending(sock.inner(), sock2);
+                    Ok(Async::Ready(()))
+                }
+                Async::NotReady => {
+                    *self = SinkStreamState::Sinking(sinking, sock2);
+                    Ok(Async::NotReady)
+                }
+            },
+            SinkStreamState::Streaming(streaming, sock2) => {
                 if let Some(multipart) = multiparts.pop_front() {
-                    let sinking = MultipartRequest::new(sock, multipart);
+                    let mut sinking: MultipartRequest<Socket> =
+                        MultipartRequest::new(sock2, multipart);
 
-                    self.poll_sink(sock, sinking, multiparts)
+                    match sinking.poll()? {
+                        Async::Ready(sock) => {
+                            *self = SinkStreamState::Streaming(streaming, sock.inner());
+                            Ok(Async::Ready(()))
+                        }
+                        Async::NotReady => {
+                            *self = SinkStreamState::Both(streaming, sinking);
+                            Ok(Async::NotReady)
+                        }
+                    }
                 } else {
+                    *self = SinkStreamState::Streaming(streaming, sock2);
                     Ok(Async::Ready(()))
                 }
             }
@@ -138,26 +111,56 @@ impl SinkStreamState {
         }
     }
 
-    fn poll_fetch(&mut self, sock: usize) -> Result<Async<Option<Multipart>>, Error> {
+    fn poll_fetch(&mut self) -> Result<Async<Option<Multipart>>, Error> {
         match self.polling() {
-            SinkStreamState::Pending => {
-                let streaming = MultipartResponse::new(sock);
+            SinkStreamState::Pending(sock1, sock2) => {
+                let mut streaming: MultipartResponse<Socket> = MultipartResponse::new(sock1);
 
-                self.poll_stream(streaming)
+                match streaming.poll()? {
+                    Async::Ready((msg, sock)) => {
+                        *self = SinkStreamState::Pending(sock.inner(), sock2);
+                        Ok(Async::Ready(Some(msg)))
+                    }
+                    Async::NotReady => {
+                        *self = SinkStreamState::Streaming(streaming, sock2);
+                        Ok(Async::NotReady)
+                    }
+                }
             }
-            SinkStreamState::Sinking(sinking) => {
-                *self = SinkStreamState::Sinking(sinking);
+            SinkStreamState::Sinking(sinking, sock2) => {
+                let mut streaming: MultipartResponse<Socket> = MultipartResponse::new(sock2);
 
-                let streaming = MultipartResponse::new(sock);
-
-                self.poll_stream(streaming)
+                match streaming.poll()? {
+                    Async::Ready((msg, sock)) => {
+                        *self = SinkStreamState::Sinking(sinking, sock.inner());
+                        Ok(Async::Ready(Some(msg)))
+                    }
+                    Async::NotReady => {
+                        *self = SinkStreamState::Both(streaming, sinking);
+                        Ok(Async::NotReady)
+                    }
+                }
             }
-            SinkStreamState::Streaming(streaming) => self.poll_stream(streaming),
-            SinkStreamState::Both(streaming, sinking) => {
-                *self = SinkStreamState::Sinking(sinking);
-
-                self.poll_stream(streaming)
-            }
+            SinkStreamState::Streaming(mut streaming, sock2) => match streaming.poll()? {
+                Async::Ready((msg, sock)) => {
+                    *self = SinkStreamState::Pending(sock.inner(), sock2);
+                    Ok(Async::Ready(Some(msg)))
+                }
+                Async::NotReady => {
+                    *self = SinkStreamState::Streaming(streaming, sock2);
+                    Ok(Async::NotReady)
+                }
+            },
+            SinkStreamState::Both(mut streaming, sinking) => match streaming.poll()? {
+                Async::Ready((msg, sock)) => {
+                    *self = SinkStreamState::Sinking(sinking, sock.inner());
+                    Ok(Async::Ready(Some(msg)))
+                }
+                Async::NotReady => {
+                    *self = SinkStreamState::Both(streaming, sinking);
+                    Ok(Async::NotReady)
+                }
+            },
             SinkStreamState::Polling => {
                 error!("poll_fetch, Called polling while polling");
                 return Err(Error::Polling);
@@ -167,13 +170,12 @@ impl SinkStreamState {
 
     fn start_send(
         &mut self,
-        sock: usize,
         multiparts: &mut VecDeque<Multipart>,
         buffer_size: usize,
         multipart: Multipart,
     ) -> Result<AsyncSink<Multipart>, Error> {
         if buffer_size < multiparts.len() {
-            if let Async::NotReady = self.poll_flush(sock, multiparts)? {
+            if let Async::NotReady = self.poll_flush(multiparts)? {
                 if buffer_size < multiparts.len() {
                     return Ok(AsyncSink::NotReady(multipart));
                 }
@@ -190,7 +192,6 @@ where
     T: From<Socket>,
 {
     state: SinkStreamState,
-    sock: usize,
     multiparts: VecDeque<Multipart>,
     buffer_size: usize,
     phantom: PhantomData<T>,
@@ -200,10 +201,11 @@ impl<T> MultipartSinkStream<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: usize, buffer_size: usize) -> Self {
+    pub fn new(sock: SockId, buffer_size: usize) -> Self {
+        use crate::poll_thread::DuplicateSock;
+
         MultipartSinkStream {
-            state: SinkStreamState::Pending,
-            sock,
+            state: SinkStreamState::Pending(sock.dup(), sock),
             multiparts: VecDeque::new(),
             buffer_size,
             phantom: PhantomData,
@@ -223,11 +225,11 @@ where
         multipart: Self::SinkItem,
     ) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
         self.state
-            .start_send(self.sock, &mut self.multiparts, self.buffer_size, multipart)
+            .start_send(&mut self.multiparts, self.buffer_size, multipart)
     }
 
     fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
-        self.state.poll_flush(self.sock, &mut self.multiparts)
+        self.state.poll_flush(&mut self.multiparts)
     }
 }
 
@@ -239,6 +241,6 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        self.state.poll_fetch(self.sock)
+        self.state.poll_fetch()
     }
 }

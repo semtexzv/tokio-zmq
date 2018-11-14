@@ -17,10 +17,19 @@
  * along with Futures ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, RawSocket};
+
 use std::{
     collections::{BTreeMap, VecDeque},
     io::{self, Read, Write},
+    marker::PhantomData,
+    mem::transmute,
     net::{TcpListener, TcpStream},
+    os::raw::c_void,
+    ptr,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -34,15 +43,44 @@ use futures::{
     sync::oneshot,
     Async, Future, Poll,
 };
+use libc::c_short;
 use zmq::{poll, Message, PollEvents, PollItem, Socket, DONTWAIT, POLLIN, POLLOUT, SNDMORE};
 
 use crate::error::Error;
 
 enum Request {
-    Init(Socket, oneshot::Sender<usize>),
+    Init(Socket, oneshot::Sender<SockId>),
     SendMessage(usize, Multipart, usize, oneshot::Sender<Response>),
     ReceiveMessage(usize, oneshot::Sender<Response>),
+    DropSocket(usize),
     Done,
+}
+
+pub(crate) trait DuplicateSock {
+    fn dup(&self) -> Self;
+}
+
+pub struct SockId(usize, Arc<Mutex<SockIdInner>>);
+
+impl SockId {
+    fn new(id: usize, tx: Sender) -> Self {
+        SockId(id, Arc::new(Mutex::new(SockIdInner(id, tx))))
+    }
+}
+
+struct SockIdInner(usize, Sender);
+
+impl DuplicateSock for SockId {
+    fn dup(&self) -> Self {
+        SockId(self.0, self.1.clone())
+    }
+}
+
+impl Drop for SockIdInner {
+    fn drop(&mut self) {
+        trace!("Dropping {}", self.0);
+        let _ = self.1.send(Request::DropSocket(self.0));
+    }
 }
 
 enum Response {
@@ -128,6 +166,16 @@ impl Channel {
             drop(write_res);
         }
     }
+
+    #[cfg(unix)]
+    fn as_raw_fd(&self) -> RawFd {
+        self.rx.as_raw_fd()
+    }
+
+    #[cfg(windows)]
+    fn as_raw_fd(&self) -> RawSocket {
+        self.rx.as_raw_socket()
+    }
 }
 
 #[derive(Clone)]
@@ -155,10 +203,6 @@ impl Receiver {
 
     /// Returns whether there are messages to look at
     fn drain(&self) -> bool {
-        if !self.channel.swap_false() {
-            return false;
-        }
-
         loop {
             match (&self.channel.rx).read(&mut [0; 32]) {
                 Ok(_) => {}
@@ -167,7 +211,7 @@ impl Receiver {
             }
         }
 
-        return true;
+        return self.channel.swap_false();
     }
 }
 
@@ -198,7 +242,7 @@ impl Session {
         let (tx, rx) = mpsc::channel();
 
         let tx = Sender {
-            tx: tx,
+            tx: tx.clone(),
             channel: channel.clone(),
         };
         let rx = Receiver {
@@ -206,8 +250,10 @@ impl Session {
             channel: channel,
         };
 
+        let tx2 = tx.clone();
+
         thread::spawn(move || {
-            PollThread::new(rx).run();
+            PollThread::new(tx2, rx).run();
         });
 
         Session {
@@ -215,19 +261,19 @@ impl Session {
         }
     }
 
-    pub fn send(&self, id: usize, msg: Multipart, buffer_size: usize) -> SendFuture {
+    pub fn send(&self, id: &SockId, msg: Multipart, buffer_size: usize) -> SendFuture {
         let (tx, rx) = oneshot::channel();
 
         self.inner
-            .send(Request::SendMessage(id, msg, buffer_size, tx));
+            .send(Request::SendMessage(id.0, msg, buffer_size, tx));
 
         SendFuture { rx }
     }
 
-    pub fn recv(&self, id: usize) -> RecvFuture {
+    pub fn recv(&self, id: &SockId) -> RecvFuture {
         let (tx, rx) = oneshot::channel();
 
-        self.inner.send(Request::ReceiveMessage(id, tx));
+        self.inner.send(Request::ReceiveMessage(id.0, tx));
 
         RecvFuture { rx }
     }
@@ -283,11 +329,11 @@ impl Future for RecvFuture {
 }
 
 pub struct InitFuture {
-    rx: oneshot::Receiver<usize>,
+    rx: oneshot::Receiver<SockId>,
 }
 
 impl Future for InitFuture {
-    type Item = usize;
+    type Item = SockId;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -542,6 +588,27 @@ impl Pollable {
     }
 }
 
+#[repr(C)]
+pub struct MyPollItem<'a> {
+    socket: *mut c_void,
+    fd: zmq_sys::RawFd,
+    events: c_short,
+    revents: c_short,
+    marker: PhantomData<&'a Socket>,
+}
+
+impl<'a> MyPollItem<'a> {
+    fn from_fd(fd: zmq_sys::RawFd, events: PollEvents) -> Self {
+        MyPollItem {
+            socket: ptr::null_mut(),
+            fd,
+            events,
+            revents: 0,
+            marker: PhantomData,
+        }
+    }
+}
+
 enum Action {
     Snd(usize),
     Rcv(usize),
@@ -549,24 +616,28 @@ enum Action {
 
 struct PollThread {
     next_sock_id: usize,
+    tx: Sender,
     rx: Receiver,
     should_stop: bool,
     to_action: Vec<Action>,
     notify: Arc<NotifyCanceled>,
     sockets: BTreeMap<usize, Pollable>,
+    channel: Arc<Channel>,
 }
 
 impl PollThread {
-    fn new(rx: Receiver) -> Self {
+    fn new(tx: Sender, rx: Receiver) -> Self {
         let channel = rx.channel.clone();
 
         PollThread {
             next_sock_id: 0,
+            tx,
             rx,
             should_stop: false,
             to_action: Vec::new(),
-            notify: Arc::new(NotifyCanceled::new(channel)),
+            notify: Arc::new(NotifyCanceled::new(channel.clone())),
             sockets: BTreeMap::new(),
+            channel,
         }
     }
 
@@ -595,7 +666,9 @@ impl PollThread {
                 let id = self.next_sock_id;
 
                 self.sockets.insert(id, Pollable::new(sock));
-                responder.send(id).unwrap();
+                if let Err(_) = responder.send(SockId::new(id, self.tx.clone())) {
+                    error!("Error responding with init socket");
+                }
 
                 self.next_sock_id += 1;
             }
@@ -626,6 +699,9 @@ impl PollThread {
                     pollable.recv_responder(responder);
                     pollable.read();
                 });
+            }
+            Request::DropSocket(id) => {
+                self.sockets.remove(&id);
             }
             Request::Done => {
                 trace!("Handling done");
@@ -676,9 +752,25 @@ impl PollThread {
             .map(|(id, pollable)| (id, pollable.as_poll_item()))
             .unzip();
 
-        let num_signalled = poll(&mut poll_items, 0).unwrap();
+        let io_item = MyPollItem::from_fd(self.channel.as_raw_fd(), POLLIN);
+
+        let io_item: PollItem = unsafe { transmute(io_item) };
+
+        poll_items.push(io_item);
+
+        let num_signalled = match poll(&mut poll_items, -1) {
+            Ok(num) => num,
+            Err(e) => {
+                error!("Error in poll, {}", e);
+                return;
+            }
+        };
 
         let mut count = 0;
+        if num_signalled > 0 && poll_items[poll_items.len() - 1].is_readable() {
+            count += 1;
+        }
+
         for (id, item) in ids.into_iter().zip(poll_items) {
             // Prioritize outbound messages over inbound messages
             if self

@@ -21,10 +21,10 @@
 
 use zmq::SocketType::{self, DEALER, PAIR, PUB, PULL, PUSH, REP, REQ, ROUTER, SUB, XPUB, XSUB};
 
-use crate::socket::Socket;
+use crate::{poll_thread::SockId, socket::Socket};
 
 // needed for derive
-type RawSocket = usize;
+type RawSocket = SockId;
 
 /* -------------------------------------------------------------------------- */
 

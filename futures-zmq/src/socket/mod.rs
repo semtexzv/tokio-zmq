@@ -27,15 +27,18 @@ use std::sync::Arc;
 use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart, SocketBuilder};
 use zmq;
 
-use crate::async_types::{
-    MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream, MultipartStream,
+use crate::{
+    async_types::{
+        MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream, MultipartStream,
+    },
+    poll_thread::SockId,
 };
 
 /// Defines the raw Socket type. This type should never be interacted with directly, except to
 /// create new instances of wrapper types.
 pub struct Socket {
     // Reads and Writes data
-    sock: usize,
+    sock: SockId,
 }
 
 impl Socket {
@@ -48,7 +51,7 @@ impl Socket {
     }
 
     /// Retrieve a Reference-Counted Pointer to self's socket.
-    pub fn inner(self) -> usize {
+    pub fn inner(self) -> SockId {
         self.sock
     }
 
@@ -56,7 +59,7 @@ impl Socket {
     ///
     /// This assumes that `sock` is already configured properly. Please don't call this directly
     /// unless you know what you're doing.
-    pub fn from_sock(sock: usize) -> Self {
+    pub fn from_sock(sock: SockId) -> Self {
         Socket { sock }
     }
 }
@@ -94,8 +97,8 @@ where
     }
 }
 
-impl From<usize> for Socket {
-    fn from(sock: usize) -> Self {
+impl From<SockId> for Socket {
+    fn from(sock: SockId) -> Self {
         Socket { sock }
     }
 }
