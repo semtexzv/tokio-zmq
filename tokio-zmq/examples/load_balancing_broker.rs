@@ -19,17 +19,17 @@
 
 extern crate env_logger;
 extern crate futures;
-extern crate tokio_zmq;
 extern crate log;
 extern crate rand;
 extern crate tokio;
+extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{env, fmt, sync::Arc, thread, time::Duration};
 
 use futures::{sync::mpsc, Future, Sink, Stream};
-use tokio_zmq::{prelude::*, Multipart, Pub, Req, Router, Sub};
 use rand::RngCore;
+use tokio_zmq::{prelude::*, Multipart, Pub, Req, Router, Sub};
 
 const NUM_CLIENTS: usize = 1000;
 const NUM_WORKERS: usize = 5;

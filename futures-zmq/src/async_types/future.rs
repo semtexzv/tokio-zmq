@@ -39,8 +39,15 @@ impl SendState {
     where
         T: From<Socket>,
     {
-        if let Async::Ready(()) = fut.poll()? {
-            Ok(Async::Ready(Socket::from_sock(sock).into()))
+        if let Async::Ready(opt) = fut.poll()? {
+            match opt {
+                None => Ok(Async::Ready(Socket::from_sock(sock).into())),
+                Some(multipart) => {
+                    *self = SendState::Pending(multipart);
+
+                    Ok(Async::NotReady)
+                }
+            }
         } else {
             *self = SendState::Running(fut);
 
@@ -48,14 +55,14 @@ impl SendState {
         }
     }
 
-    fn poll_flush<T>(&mut self, sock: usize) -> Result<Async<T>, Error>
+    fn poll_flush<T>(&mut self, sock: usize, buffer_size: usize) -> Result<Async<T>, Error>
     where
         T: From<Socket>,
     {
         match self.polling() {
             SendState::Pending(multipart) => {
                 trace!("Sending {:?}", multipart);
-                let fut = SESSION.send(sock, multipart);
+                let fut = SESSION.send(sock, multipart, buffer_size);
 
                 self.poll_fut(sock, fut)
             }
@@ -74,6 +81,7 @@ where
 {
     state: SendState,
     sock: usize,
+    buffer_size: usize,
     phantom: PhantomData<T>,
 }
 
@@ -82,9 +90,14 @@ where
     T: From<Socket>,
 {
     pub fn new(sock: usize, multipart: Multipart) -> Self {
+        Self::new_with_buffer_size(sock, multipart, 1)
+    }
+
+    pub fn new_with_buffer_size(sock: usize, multipart: Multipart, buffer_size: usize) -> Self {
         MultipartRequest {
             state: SendState::Pending(multipart),
             sock,
+            buffer_size,
             phantom: PhantomData,
         }
     }
@@ -98,7 +111,7 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
-        self.state.poll_flush(self.sock)
+        self.state.poll_flush(self.sock, self.buffer_size)
     }
 }
 

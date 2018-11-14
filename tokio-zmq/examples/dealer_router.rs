@@ -19,10 +19,10 @@
 
 extern crate env_logger;
 extern crate futures;
-extern crate tokio_zmq;
 extern crate log;
 extern crate tokio;
 extern crate tokio_executor;
+extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{env, sync::Arc, thread};

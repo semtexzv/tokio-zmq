@@ -18,9 +18,9 @@
  */
 
 extern crate futures;
-extern crate tokio_zmq;
 extern crate tokio;
 extern crate tokio_timer;
+extern crate tokio_zmq;
 extern crate zmq;
 
 use std::{
@@ -30,9 +30,9 @@ use std::{
 };
 
 use futures::{stream::iter_ok, Future, Stream};
+use tokio_timer::{Error as TimerError, Interval};
 use tokio_zmq::prelude::*;
 use tokio_zmq::{Error as ZmqFutError, Push};
-use tokio_timer::{Error as TimerError, Interval};
 
 #[derive(Debug)]
 enum Error {

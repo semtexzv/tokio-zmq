@@ -40,12 +40,13 @@ impl SinkState {
         sock: usize,
         mut fut: MultipartRequest<Socket>,
         multiparts: &mut VecDeque<Multipart>,
+        buffer_size: usize,
     ) -> Result<Async<()>, Error> {
         if let Async::Ready(_) = fut.poll()? {
             *self = SinkState::Pending;
 
             if !multiparts.is_empty() {
-                self.poll_flush(sock, multiparts)
+                self.poll_flush(sock, multiparts, buffer_size)
             } else {
                 Ok(Async::Ready(()))
             }
@@ -60,18 +61,19 @@ impl SinkState {
         &mut self,
         sock: usize,
         multiparts: &mut VecDeque<Multipart>,
+        buffer_size: usize,
     ) -> Result<Async<()>, Error> {
         match self.polling() {
             SinkState::Pending => {
                 if let Some(multipart) = multiparts.pop_front() {
-                    let fut = MultipartRequest::new(sock, multipart);
+                    let fut = MultipartRequest::new_with_buffer_size(sock, multipart, buffer_size);
 
-                    self.poll_fut(sock, fut, multiparts)
+                    self.poll_fut(sock, fut, multiparts, buffer_size)
                 } else {
                     Ok(Async::Ready(()))
                 }
             }
-            SinkState::Running(fut) => self.poll_fut(sock, fut, multiparts),
+            SinkState::Running(fut) => self.poll_fut(sock, fut, multiparts, buffer_size),
             SinkState::Polling => {
                 error!("Called polling while polling");
                 return Err(Error::Polling);
@@ -86,9 +88,9 @@ impl SinkState {
         buffer_size: usize,
         multipart: Multipart,
     ) -> Result<AsyncSink<Multipart>, Error> {
-        if buffer_size < multiparts.len() {
-            if let Async::NotReady = self.poll_flush(sock, multiparts)? {
-                if buffer_size < multiparts.len() {
+        if multiparts.len() >= 1 {
+            if let Async::NotReady = self.poll_flush(sock, multiparts, buffer_size)? {
+                if multiparts.len() >= 1 {
                     return Ok(AsyncSink::NotReady(multipart));
                 }
             }
@@ -141,6 +143,7 @@ where
     }
 
     fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
-        self.state.poll_flush(self.sock, &mut self.multiparts)
+        self.state
+            .poll_flush(self.sock, &mut self.multiparts, self.buffer_size)
     }
 }
