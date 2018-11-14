@@ -12,7 +12,3 @@ keywords = ["zmq", "zeromq", "futures", "tokio", "async"]
 failure = "0.1"
 futures = "0.1"
 zmq = "0.8"
-
-[dev-dependencies]
-tokio = "0.1"
-tokio-zmq = { version = "0.7", path = "../tokio-zmq" }
