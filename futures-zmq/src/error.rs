@@ -29,6 +29,9 @@ pub enum Error {
 
     #[fail(display = "Polling called while polling")]
     Polling,
+
+    #[fail(display = "Socket dropped")]
+    Dropped,
 }
 
 impl From<zmq::Error> for Error {

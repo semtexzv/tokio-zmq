@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     io::{self, Read, Write},
     marker::PhantomData,
-    mem::transmute,
+    mem::{replace, transmute},
     net::{TcpListener, TcpStream},
     os::raw::c_void,
     ptr,
@@ -168,12 +168,12 @@ impl Channel {
     }
 
     #[cfg(unix)]
-    fn as_raw_fd(&self) -> RawFd {
+    fn read_fd(&self) -> RawFd {
         self.rx.as_raw_fd()
     }
 
     #[cfg(windows)]
-    fn as_raw_fd(&self) -> RawSocket {
+    fn read_fd(&self) -> RawSocket {
         self.rx.as_raw_socket()
     }
 }
@@ -211,13 +211,13 @@ impl Receiver {
             }
         }
 
-        return self.channel.swap_false();
+        self.channel.swap_false()
     }
 }
 
 #[derive(Clone)]
 pub struct Session {
-    inner: Arc<InnerSession>,
+    inner: Arc<Mutex<Option<InnerSession>>>,
 }
 
 impl Session {
@@ -261,10 +261,19 @@ impl Session {
         }
     }
 
+    pub fn shutdown(&self) {
+        *self.inner.lock().unwrap() = None;
+    }
+
     pub fn send(&self, id: &SockId, msg: Multipart, buffer_size: usize) -> SendFuture {
         let (tx, rx) = oneshot::channel();
 
         self.inner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone()
             .send(Request::SendMessage(id.0, msg, buffer_size, tx));
 
         SendFuture { rx }
@@ -273,7 +282,13 @@ impl Session {
     pub fn recv(&self, id: &SockId) -> RecvFuture {
         let (tx, rx) = oneshot::channel();
 
-        self.inner.send(Request::ReceiveMessage(id.0, tx));
+        self.inner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone()
+            .send(Request::ReceiveMessage(id.0, tx));
 
         RecvFuture { rx }
     }
@@ -281,7 +296,13 @@ impl Session {
     pub fn init(&self, sock: Socket) -> InitFuture {
         let (tx, rx) = oneshot::channel();
 
-        self.inner.send(Request::Init(sock, tx));
+        self.inner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone()
+            .send(Request::Init(sock, tx));
 
         InitFuture { rx }
     }
@@ -342,22 +363,23 @@ impl Future for InitFuture {
 }
 
 struct InnerSession {
-    tx: Mutex<Sender>,
+    tx: Sender,
 }
 
 impl InnerSession {
-    fn init(tx: Sender) -> Arc<Self> {
-        Arc::new(InnerSession { tx: Mutex::new(tx) })
+    fn init(tx: Sender) -> Arc<Mutex<Option<Self>>> {
+        Arc::new(Mutex::new(Some(InnerSession { tx })))
     }
 
     fn send(&self, request: Request) {
-        self.tx.lock().unwrap().clone().send(request);
+        self.tx.send(request);
     }
 }
 
 impl Drop for InnerSession {
     fn drop(&mut self) {
-        self.tx.lock().unwrap().clone().send(Request::Done);
+        info!("Dropping session");
+        self.tx.send(Request::Done);
     }
 }
 
@@ -395,6 +417,7 @@ struct Pollable {
     sock: Socket,
     kind: PollKind,
     msg: VecDeque<Multipart>,
+    current_recv_msg: Multipart,
     pending_recv_msg: VecDeque<Multipart>,
     send_responder: Option<oneshot::Sender<Response>>,
     recv_responder: Option<oneshot::Sender<Response>>,
@@ -406,6 +429,7 @@ impl Pollable {
             sock,
             kind: PollKind::UNUSED,
             msg: VecDeque::new(),
+            current_recv_msg: Multipart::new(),
             pending_recv_msg: VecDeque::new(),
             send_responder: None,
             recv_responder: None,
@@ -450,28 +474,32 @@ impl Pollable {
     }
 
     fn send_responder(&mut self, r: oneshot::Sender<Response>) {
+        if self.send_responder.is_some() {
+            panic!("Overwriting an existing responder");
+        }
         self.send_responder = Some(r);
     }
 
     fn recv_responder(&mut self, r: oneshot::Sender<Response>) {
+        if self.recv_responder.is_some() {
+            panic!("Overwriting an existing responder");
+        }
         self.recv_responder = Some(r);
     }
 
     fn recv_msg(&mut self) {
         'multiparts: loop {
-            let mut multipart = Multipart::new();
-
             'messages: loop {
                 match self.sock.recv_msg(DONTWAIT) {
                     Ok(msg) => {
                         let get_more = msg.get_more();
-                        multipart.push_back(msg);
+                        self.current_recv_msg.push_back(msg);
 
                         if get_more {
                             continue 'messages;
                         }
-                        trace!("Received msg");
                         self.clear_read();
+                        let multipart = replace(&mut self.current_recv_msg, Multipart::new());
                         if let Some(responder) = self.recv_responder.take() {
                             if let Err(_) = responder.send(Response::Received(multipart)) {
                                 error!("Error responding with received message");
@@ -483,12 +511,9 @@ impl Pollable {
                     }
                     Err(e) => match e {
                         zmq::Error::EAGAIN => {
-                            warn!("EAGAIN while receiving");
-                            self.clear_read();
                             break 'multiparts;
                         }
                         zmq::Error::EFSM => {
-                            trace!("Tried to read after read should be done");
                             self.clear_read();
                             break 'multiparts;
                         }
@@ -511,62 +536,53 @@ impl Pollable {
     }
 
     fn send_msg(&mut self) {
-        trace!("send_msg");
-        loop {
-            trace!("loop");
-            if let Some(mut multipart) = self.msg.pop_front() {
-                trace!("Got multipart");
-                if let Some(msg) = multipart.pop_front() {
-                    trace!("Got message to send");
-                    let flags = DONTWAIT | if multipart.is_empty() { 0 } else { SNDMORE };
+        'multiparts: loop {
+            let mut multipart = if let Some(multipart) = self.msg.pop_front() {
+                multipart
+            } else {
+                return;
+            };
 
-                    let msg_clone_res = Message::from_slice(&msg);
+            'messages: loop {
+                let msg = if let Some(msg) = multipart.pop_front() {
+                    msg
+                } else {
+                    continue 'multiparts;
+                };
 
-                    match self.sock.send_msg(msg, flags) {
-                        Ok(_) => {
-                            trace!("Sent message");
-                            if !multipart.is_empty() {
-                                self.msg.push_front(multipart);
-                                trace!("Multipart not empty, continuing");
-                                continue;
-                            }
-                            if !self.msg.is_empty() {
-                                trace!("msg not empty, continuing");
-                                continue;
-                            }
+                let flags = DONTWAIT | if multipart.is_empty() { 0 } else { SNDMORE };
 
-                            self.clear_write();
-                            if let Err(_) = self.send_responder.take().unwrap().send(Response::Sent)
-                            {
-                                error!("Error responding with sent");
-                            }
-                            break;
+                let msg_clone_res = Message::from_slice(&msg);
+
+                let err = match self.sock.send_msg(msg, flags) {
+                    Ok(_) => {
+                        if !multipart.is_empty() {
+                            continue 'messages;
                         }
-                        Err(e) => match e {
-                            zmq::Error::EAGAIN => {
-                                warn!("EAGAIN while sending");
-                                match msg_clone_res {
-                                    Ok(msg) => {
-                                        multipart.push_front(msg);
-                                        self.msg.push_front(multipart);
-                                    }
-                                    Err(e) => {
-                                        self.clear_write();
-                                        if let Err(_) = self
-                                            .send_responder
-                                            .take()
-                                            .unwrap()
-                                            .send(Response::Error(e.into()))
-                                        {
-                                            error!("Error responding with error");
-                                        }
-                                    }
-                                }
-                                break;
+
+                        if !self.msg.is_empty() {
+                            continue 'multiparts;
+                        }
+
+                        self.clear_write();
+                        if let Err(_) = self.send_responder.take().unwrap().send(Response::Sent) {
+                            error!("Error responding with sent");
+                        }
+                        return;
+                    }
+                    Err(e) => e,
+                };
+
+                match err {
+                    zmq::Error::EAGAIN => {
+                        warn!("EAGAIN while sending");
+                        match msg_clone_res {
+                            Ok(msg) => {
+                                multipart.push_front(msg);
+                                self.msg.push_front(multipart);
                             }
-                            e => {
+                            Err(e) => {
                                 self.clear_write();
-                                error!("Error sending message");
                                 if let Err(_) = self
                                     .send_responder
                                     .take()
@@ -575,14 +591,28 @@ impl Pollable {
                                 {
                                     error!("Error responding with error");
                                 }
-                                break;
                             }
-                        },
+                        }
+                        return;
+                    }
+                    zmq::Error::EFSM => {
+                        self.clear_write();
+                        return;
+                    }
+                    e => {
+                        self.clear_write();
+                        error!("Error sending message");
+                        if let Err(_) = self
+                            .send_responder
+                            .take()
+                            .unwrap()
+                            .send(Response::Error(e.into()))
+                        {
+                            error!("Error responding with error");
+                        }
+                        return;
                     }
                 }
-            } else {
-                self.clear_write();
-                break;
             }
         }
     }
@@ -648,14 +678,61 @@ impl PollThread {
     }
 
     fn try_recv(&mut self) {
-        if self.rx.drain() {
-            trace!("new messages to handle");
-            while let Some(msg) = self.rx.try_recv() {
-                self.handle_request(msg);
+        let mut modified = false;
+        while let Some(msg) = self.rx.try_recv() {
+            modified = true;
 
-                if self.should_stop {
-                    break;
+            if !self.should_stop {
+                self.handle_request(msg);
+            } else {
+                self.respond_stopping(msg);
+            }
+        }
+        self.rx.drain();
+        if !modified {
+            self.rx.channel.notify();
+        }
+    }
+
+    fn respond_stopping(&mut self, request: Request) {
+        match request {
+            Request::Init(_, responder) => {
+                let id = self.next_sock_id;
+
+                if let Err(_) = responder.send(SockId::new(id, self.tx.clone())) {
+                    error!("Error responding with init socket");
                 }
+
+                self.next_sock_id += 1;
+            }
+            Request::SendMessage(_, _, _, responder) => {
+                if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                    error!("Error responding with dropped");
+                }
+            }
+            Request::ReceiveMessage(_, responder) => {
+                if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                    error!("Error responding with dropped");
+                }
+            }
+            Request::DropSocket(id) => {
+                if let Some(mut pollable) = self.sockets.remove(&id) {
+                    if let Some(responder) = pollable.send_responder.take() {
+                        if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                            error!("Error notifying dropped socket");
+                        }
+                    }
+
+                    if let Some(responder) = pollable.recv_responder.take() {
+                        if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                            error!("Error notifying dropped socket");
+                        }
+                    }
+                }
+            }
+            Request::Done => {
+                info!("Handling done");
+                self.should_stop = true;
             }
         }
     }
@@ -673,8 +750,7 @@ impl PollThread {
                 self.next_sock_id += 1;
             }
             Request::SendMessage(id, message, buffer_size, responder) => {
-                trace!("Handling send");
-                self.sockets.get_mut(&id).map(|pollable| {
+                if let Some(pollable) = self.sockets.get_mut(&id) {
                     if let Some(msg) = pollable.message(message, buffer_size) {
                         trace!("Buffer full");
                         if let Err(_) = responder.send(Response::Full(msg)) {
@@ -684,11 +760,15 @@ impl PollThread {
                     }
                     pollable.write();
                     pollable.send_responder(responder);
-                });
+                } else {
+                    error!("Tried to send to dropped socket");
+                    if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                        error!("Error responding with dropped");
+                    }
+                }
             }
             Request::ReceiveMessage(id, responder) => {
-                trace!("Handling recv");
-                self.sockets.get_mut(&id).map(|pollable| {
+                if let Some(pollable) = self.sockets.get_mut(&id) {
                     if let Some(multipart) = pollable.pending_recv_msg.pop_front() {
                         trace!("responding with buffered data");
                         if let Err(_) = responder.send(Response::Received(multipart)) {
@@ -698,13 +778,30 @@ impl PollThread {
                     }
                     pollable.recv_responder(responder);
                     pollable.read();
-                });
+                } else {
+                    error!("Tried to receive from dropped socket");
+                    if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                        error!("Error responding with dropped");
+                    }
+                }
             }
             Request::DropSocket(id) => {
-                self.sockets.remove(&id);
+                if let Some(mut pollable) = self.sockets.remove(&id) {
+                    if let Some(responder) = pollable.send_responder.take() {
+                        if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                            error!("Error notifying dropped socket");
+                        }
+                    }
+
+                    if let Some(responder) = pollable.recv_responder.take() {
+                        if let Err(_) = responder.send(Response::Error(Error::Dropped)) {
+                            error!("Error notifying dropped socket");
+                        }
+                    }
+                }
             }
             Request::Done => {
-                trace!("Handling done");
+                info!("Handling done");
                 self.should_stop = true;
             }
         }
@@ -752,13 +849,13 @@ impl PollThread {
             .map(|(id, pollable)| (id, pollable.as_poll_item()))
             .unzip();
 
-        let io_item = MyPollItem::from_fd(self.channel.as_raw_fd(), POLLIN);
+        let io_item = MyPollItem::from_fd(self.channel.read_fd(), POLLIN);
 
         let io_item: PollItem = unsafe { transmute(io_item) };
 
         poll_items.push(io_item);
 
-        let num_signalled = match poll(&mut poll_items, -1) {
+        let num_signalled = match poll(&mut poll_items, 0) {
             Ok(num) => num,
             Err(e) => {
                 error!("Error in poll, {}", e);
@@ -779,7 +876,6 @@ impl PollThread {
                 .map(|p| p.is_writable(&item))
                 .unwrap_or(false)
             {
-                trace!("{} is writable", id);
                 self.to_action.push(Action::Snd(id));
 
                 count += 1;
@@ -789,7 +885,6 @@ impl PollThread {
                 .map(|p| p.is_readable(&item))
                 .unwrap_or(false)
             {
-                trace!("{} is readable", id);
                 self.to_action.push(Action::Rcv(id));
 
                 count += 1;
