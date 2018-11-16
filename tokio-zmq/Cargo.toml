@@ -1,7 +1,7 @@
 [package]
 name = "tokio-zmq"
 description = "Provides Futures abstractions for ZeroMQ on the Tokio event-loop"
-version = "0.7.0"
+version = "0.8.0"
 license = "GPL-3.0"
 authors = ["asonix <asonix@asonix.dog>"]
 repository = "https://git.asonix.dog/asonix/tokio-zmq"
@@ -11,7 +11,7 @@ keywords = ["zmq", "zeromq", "futures", "tokio"]
 
 [dependencies]
 async-zmq-derive = { path = "../async-zmq-derive", version = "0.1" }
-async-zmq-types = { path = "../async-zmq-types", version = "0.1" }
+async-zmq-types = { path = "../async-zmq-types", version = "0.2" }
 futures = "0.1.24"
 log = "0.4"
 mio = "0.6"

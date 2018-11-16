@@ -1,5 +1,5 @@
 # Tokio ZMQ
-_This readme is for the 0.7 branch, for the 0.3 readme, look [here](https://git.asonix.dog/asonix/tokio-zmq/src/branch/v0.3.X)_
+_This readme is for the 0.8 branch, for the 0.3 readme, look [here](https://git.asonix.dog/asonix/tokio-zmq/src/branch/v0.3.X)_
 
 [documentation](https://docs.rs/tokio-zmq/)
 [crates.io](https://crates.io/crates/tokio-zmq)
@@ -24,10 +24,10 @@ See the [examples folder](https://git.asonix.dog/asonix/async-zmq/src/branch/dev
 ### Getting Started
 
 ```toml
-zmq = "0.8"
-tokio-zmq = "0.7"
 futures = "0.1.25"
 tokio = "0.1"
+tokio-zmq = "0.8"
+zmq = "0.8"
 ```
 
 In your application:

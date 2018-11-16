@@ -25,10 +25,10 @@ NOTE: These examples use Tokio, but this crate does not require tokio's runtime.
 ### Getting Started
 
 ```toml
-zmq = "0.8"
-futures-zmq = "0.1"
 futures = "0.1.25"
+futures-zmq = "0.3"
 tokio = "0.1"
+zmq = "0.8"
 ```
 
 In your application:
