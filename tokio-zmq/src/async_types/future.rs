@@ -20,7 +20,7 @@
 //! This module contains definitions for `MultipartRequest` and `MultipartResponse`, the two types that
 //! implement `futures::Future`.
 
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
 use async_zmq_types::Multipart;
 use futures::{Async, Future};
@@ -113,6 +113,24 @@ where
     }
 }
 
+impl<T> fmt::Debug for MultipartRequest<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SendFuture")
+    }
+}
+
+impl<T> fmt::Display for MultipartRequest<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SendFuture")
+    }
+}
+
 /// The `MultipartResponse` Future handles asynchronously getting data from a socket.
 ///
 /// ### Example
@@ -189,5 +207,23 @@ where
         } else {
             Err(Error::Reused)
         }
+    }
+}
+
+impl<T> fmt::Debug for MultipartResponse<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RecvFuture")
+    }
+}
+
+impl<T> fmt::Display for MultipartResponse<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RecvFuture")
     }
 }

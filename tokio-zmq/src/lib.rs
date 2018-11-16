@@ -92,16 +92,11 @@
 //! # }
 //! ```
 
-#[macro_use]
-extern crate async_zmq_derive;
-#[macro_use]
-extern crate log;
-
 pub mod async_types;
 mod error;
-pub mod file;
+mod file;
 pub mod prelude;
-pub mod socket;
+mod socket;
 
 pub use async_zmq_types::Multipart;
 

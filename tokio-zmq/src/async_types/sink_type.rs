@@ -24,6 +24,7 @@ use std::{collections::VecDeque, mem};
 
 use async_zmq_types::Multipart;
 use futures::{Async, AsyncSink};
+use log::error;
 use zmq;
 
 use crate::{

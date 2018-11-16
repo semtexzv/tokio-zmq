@@ -24,6 +24,7 @@ use std::mem;
 
 use async_zmq_types::Multipart;
 use futures::{task::current, Async};
+use log::debug;
 use mio::Ready;
 use zmq::{self, Message, DONTWAIT, POLLIN, POLLOUT, SNDMORE};
 

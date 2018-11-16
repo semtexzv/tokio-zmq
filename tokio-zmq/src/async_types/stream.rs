@@ -17,9 +17,13 @@
  * along with Tokio ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    marker::PhantomData,
+    time::{Duration, Instant},
+};
 
-use async_zmq_types::Multipart;
+use async_zmq_types::{IntoSocket, Multipart};
 use futures::{future::Either, Async, Future, Stream};
 use tokio_timer::Delay;
 use zmq;
@@ -29,6 +33,7 @@ pub use async_zmq_types::{ControlledStream, EndingStream};
 use crate::{
     async_types::{stream_type::StreamType, EventedFile},
     error::Error,
+    socket::Socket,
 };
 
 /// The `MultipartStream` Sink handles receiving streams of data from ZeroMQ Sockets.
@@ -63,28 +68,66 @@ use crate::{
 ///         });
 /// }
 /// ```
-pub struct MultipartStream {
+pub struct MultipartStream<T>
+where
+    T: From<Socket>,
+{
     sock: zmq::Socket,
     file: EventedFile,
     inner: StreamType,
+    phantom: PhantomData<T>,
 }
 
-impl MultipartStream {
+impl<T> MultipartStream<T>
+where
+    T: From<Socket>,
+{
     pub fn new(sock: zmq::Socket, file: EventedFile) -> Self {
         MultipartStream {
             sock,
             file,
             inner: StreamType::new(),
+            phantom: PhantomData,
         }
     }
 }
 
-impl Stream for MultipartStream {
+impl<T> IntoSocket<T, Socket> for MultipartStream<T>
+where
+    T: From<Socket>,
+{
+    fn into_socket(self) -> T {
+        T::from(Socket::from_sock_and_file(self.sock, self.file))
+    }
+}
+
+impl<T> Stream for MultipartStream<T>
+where
+    T: From<Socket>,
+{
     type Item = Multipart;
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Option<Multipart>>, Self::Error> {
         self.inner.poll(&self.sock, &self.file)
+    }
+}
+
+impl<T> fmt::Debug for MultipartStream<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartStream")
+    }
+}
+
+impl<T> fmt::Display for MultipartStream<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartStream")
     }
 }
 

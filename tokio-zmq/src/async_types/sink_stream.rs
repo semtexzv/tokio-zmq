@@ -20,16 +20,26 @@
 //! This module defines the `MultipartSinkStream` type. A wrapper around Sockets that implements
 //! `futures::Sink` and `futures::Stream`.
 
-use std::mem;
+use std::{fmt, marker::PhantomData, mem};
 
-use async_zmq_types::Multipart;
+use async_zmq_types::{IntoSocket, Multipart};
 use futures::{Async, AsyncSink, Sink, Stream};
+use log::{debug, error};
 use zmq;
 
 use crate::{
     async_types::{sink_type::SinkType, stream_type::StreamType, EventedFile},
     error::Error,
+    socket::Socket,
 };
+
+enum SinkStreamState {
+    Sink(SinkType),
+    Stream(StreamType),
+    Both(SinkType, StreamType),
+    Ready,
+    Polling,
+}
 
 /// The `MultipartSinkStream` handles sending and receiving streams of data to and from ZeroMQ
 /// Sockets.
@@ -62,28 +72,28 @@ use crate::{
 ///     // tokio::run(fut.map(|_| ()).map_err(|_| ()));
 /// }
 /// ```
-pub struct MultipartSinkStream {
+pub struct MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
     sock: zmq::Socket,
     file: EventedFile,
     inner: SinkStreamState,
     buffer_size: usize,
+    phantom: PhantomData<T>,
 }
 
-enum SinkStreamState {
-    Sink(SinkType),
-    Stream(StreamType),
-    Both(SinkType, StreamType),
-    Ready,
-    Polling,
-}
-
-impl MultipartSinkStream {
+impl<T> MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
     pub fn new(buffer_size: usize, sock: zmq::Socket, file: EventedFile) -> Self {
         MultipartSinkStream {
             sock: sock,
             file: file,
             inner: SinkStreamState::Ready,
             buffer_size,
+            phantom: PhantomData,
         }
     }
 
@@ -144,7 +154,19 @@ impl MultipartSinkStream {
     }
 }
 
-impl Sink for MultipartSinkStream {
+impl<T> IntoSocket<T, Socket> for MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
+    fn into_socket(self) -> T {
+        T::from(Socket::from_sock_and_file(self.sock, self.file))
+    }
+}
+
+impl<T> Sink for MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
     type SinkItem = Multipart;
     type SinkError = Error;
 
@@ -203,7 +225,10 @@ impl Sink for MultipartSinkStream {
     }
 }
 
-impl Stream for MultipartSinkStream {
+impl<T> Stream for MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
     type Item = Multipart;
     type Error = Error;
 
@@ -215,5 +240,23 @@ impl Stream for MultipartSinkStream {
             SinkStreamState::Stream(stream) => self.poll_stream(stream, None),
             SinkStreamState::Polling => Err(Error::Stream),
         }
+    }
+}
+
+impl<T> fmt::Debug for MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartSinkStream")
+    }
+}
+
+impl<T> fmt::Display for MultipartSinkStream<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartSinkStream")
     }
 }

@@ -22,7 +22,7 @@
 pub mod config;
 pub mod types;
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart, SocketBuilder};
 use tokio_reactor::PollEvented;
@@ -87,10 +87,10 @@ where
     type Request = MultipartRequest<T>;
     type Response = MultipartResponse<T>;
 
-    type Sink = MultipartSink;
-    type Stream = MultipartStream;
+    type Sink = MultipartSink<T>;
+    type Stream = MultipartStream<T>;
 
-    type SinkStream = MultipartSinkStream;
+    type SinkStream = MultipartSinkStream<T>;
 
     fn send(self, multipart: Multipart) -> Self::Request {
         MultipartRequest::new(self.sock, self.file, multipart)
@@ -116,5 +116,17 @@ where
 impl From<(zmq::Socket, EventedFile)> for Socket {
     fn from((sock, file): (zmq::Socket, EventedFile)) -> Self {
         Socket { sock, file }
+    }
+}
+
+impl fmt::Debug for Socket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Socket")
+    }
+}
+
+impl fmt::Display for Socket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Socket")
     }
 }

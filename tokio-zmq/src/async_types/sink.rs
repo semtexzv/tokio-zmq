@@ -20,13 +20,16 @@
 //! This module defines the `MultipartSink` type. A wrapper around Sockets that implements
 //! `futures::Sink`.
 
-use async_zmq_types::Multipart;
+use std::{fmt, marker::PhantomData};
+
+use async_zmq_types::{IntoSocket, Multipart};
 use futures::{Async, AsyncSink, Sink};
 use zmq;
 
 use crate::{
     async_types::{sink_type::SinkType, EventedFile},
     error::Error,
+    socket::Socket,
 };
 
 /// The `MultipartSink` Sink handles sending streams of data to ZeroMQ Sockets.
@@ -62,23 +65,43 @@ use crate::{
 ///     // tokio::run(fut.map(|_| ()).map_err(|_| ()));
 /// }
 /// ```
-pub struct MultipartSink {
+pub struct MultipartSink<T>
+where
+    T: From<Socket>,
+{
     sock: zmq::Socket,
     file: EventedFile,
     inner: SinkType,
+    phantom: PhantomData<T>,
 }
 
-impl MultipartSink {
+impl<T> MultipartSink<T>
+where
+    T: From<Socket>,
+{
     pub fn new(buffer_size: usize, sock: zmq::Socket, file: EventedFile) -> Self {
         MultipartSink {
             sock,
             file,
             inner: SinkType::new(buffer_size),
+            phantom: PhantomData,
         }
     }
 }
 
-impl Sink for MultipartSink {
+impl<T> IntoSocket<T, Socket> for MultipartSink<T>
+where
+    T: From<Socket>,
+{
+    fn into_socket(self) -> T {
+        T::from(Socket::from_sock_and_file(self.sock, self.file))
+    }
+}
+
+impl<T> Sink for MultipartSink<T>
+where
+    T: From<Socket>,
+{
     type SinkItem = Multipart;
     type SinkError = Error;
 
@@ -91,5 +114,23 @@ impl Sink for MultipartSink {
 
     fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
         self.inner.poll_complete(&self.sock, &self.file)
+    }
+}
+
+impl<T> fmt::Debug for MultipartSink<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartSink")
+    }
+}
+
+impl<T> fmt::Display for MultipartSink<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartSink")
     }
 }
