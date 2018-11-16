@@ -379,20 +379,17 @@ fn main() {
             let clients = (0..NUM_CLIENTS)
                 .map(|client_num| {
                     if client_num % BATCH_SIZE == 0 {
-                        // println!("SLEEPING - {} - to avoid too many open files", client_num);
+                        println!("Sleeping to avoid too many open files");
                         thread::sleep(Duration::from_millis(50));
                     }
                     thread::spawn(move || client_task(client_num))
                 })
                 .collect::<Vec<_>>();
 
-            println!("Joining clients");
             // Wait for clients to finish
-            for (index, client) in clients.into_iter().enumerate() {
+            for client in clients {
                 client.join().unwrap();
-                println!("Joined {}", index);
             }
-            println!("Joined all");
 
             // Set up control socket
             let context = Arc::new(zmq::Context::new());
@@ -400,7 +397,6 @@ fn main() {
 
             thread::sleep(Duration::from_secs(1));
 
-            println!("Sending stop");
             // Signal end when all clients have joined
             tokio::run(
                 control_fut
@@ -411,7 +407,6 @@ fn main() {
                         Ok(())
                     }),
             );
-            println!("Stop sent");
         }
         _ => (),
     };

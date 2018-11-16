@@ -28,3 +28,9 @@ pub use self::{
     sink_stream::MultipartSinkStream,
     stream::MultipartStream,
 };
+
+pub(crate) use self::{
+    future::{RecvState, SendState},
+    sink::SinkState,
+    stream::StreamState,
+};

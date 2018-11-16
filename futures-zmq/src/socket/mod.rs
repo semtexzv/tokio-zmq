@@ -22,7 +22,7 @@
 pub mod config;
 pub mod types;
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use async_zmq_types::{InnerSocket, IntoInnerSocket, Multipart, SocketBuilder};
 use zmq;
@@ -100,5 +100,17 @@ where
 impl From<SockId> for Socket {
     fn from(sock: SockId) -> Self {
         Socket { sock }
+    }
+}
+
+impl fmt::Debug for Socket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Socket({:?})", self.sock)
+    }
+}
+
+impl fmt::Display for Socket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Socket({})", self.sock)
     }
 }

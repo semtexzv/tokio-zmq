@@ -31,7 +31,7 @@ type RawSocket = SockId;
 /// The DEALER `SocketType` wrapper type.
 ///
 /// Dealer implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Dealer {
@@ -43,7 +43,7 @@ pub struct Dealer {
 /// The PAIR `SocketType` wrapper type.
 ///
 /// Pair implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Pair {
@@ -55,7 +55,7 @@ pub struct Pair {
 /// The PUB `SocketType` wrapper type
 ///
 /// Pub implements `SinkSocket`.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[sink]
 pub struct Pub {
     pub(crate) inner: Socket,
@@ -66,7 +66,7 @@ pub struct Pub {
 /// The PULL `SocketType` wrapper type
 ///
 /// Pull implements `StreamSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 pub struct Pull {
     pub(crate) inner: Socket,
@@ -77,7 +77,7 @@ pub struct Pull {
 /// The PUSH `SocketType` wrapper type
 ///
 /// Push implements `SinkSocket`.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[sink]
 pub struct Push {
     pub(crate) inner: Socket,
@@ -88,7 +88,7 @@ pub struct Push {
 /// The REP `SocketType` wrapper type
 ///
 /// Rep implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Rep {
@@ -100,7 +100,7 @@ pub struct Rep {
 /// The REQ `SocketType` wrapper type
 ///
 /// Req implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Req {
@@ -112,7 +112,7 @@ pub struct Req {
 /// The ROUTER `SocketType` wrapper type
 ///
 /// Router implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Router {
@@ -124,7 +124,7 @@ pub struct Router {
 /// The SUB `SocketType` wrapper type
 ///
 /// Sub implements `StreamSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 pub struct Sub {
     pub(crate) inner: Socket,
@@ -135,7 +135,7 @@ pub struct Sub {
 /// The XPUB `SocketType` wrapper type
 ///
 /// Xpub implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Xpub {
@@ -147,7 +147,7 @@ pub struct Xpub {
 /// The XSUB `SocketType` wrapper type
 ///
 /// Xsub implements `StreamSocket` and `SinkSocket`, and has an associated controlled variant.
-#[derive(SocketWrapper)]
+#[derive(Debug, SocketWrapper)]
 #[stream]
 #[sink]
 pub struct Xsub {

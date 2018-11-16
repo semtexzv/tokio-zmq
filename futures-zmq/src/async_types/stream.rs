@@ -17,16 +17,16 @@
  * along with Futures ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-use std::{marker::PhantomData, mem};
+use std::{fmt, marker::PhantomData, mem};
 
 use async_zmq_types::Multipart;
-use futures::{Async, Future, Stream};
+use futures::{Async, Stream};
 
-use crate::{async_types::MultipartResponse, error::Error, poll_thread::SockId, socket::Socket};
+use crate::{async_types::RecvState, error::Error, poll_thread::SockId, socket::Socket};
 
-enum StreamState {
-    Pending(SockId),
-    Running(MultipartResponse<Socket>),
+pub(crate) enum StreamState {
+    Pending,
+    Running(RecvState),
     Polling,
 }
 
@@ -37,27 +37,25 @@ impl StreamState {
 
     fn poll_fut(
         &mut self,
-        mut fut: MultipartResponse<Socket>,
+        sock: &SockId,
+        mut fut: RecvState,
     ) -> Result<Async<Option<Multipart>>, Error> {
-        if let Async::Ready((msg, sock)) = fut.poll()? {
-            *self = StreamState::Pending(sock.inner());
-
-            Ok(Async::Ready(Some(msg)))
-        } else {
-            *self = StreamState::Running(fut);
-
-            Ok(Async::NotReady)
+        match fut.poll_fetch(sock)? {
+            Async::Ready(msg) => {
+                *self = StreamState::Pending;
+                Ok(Async::Ready(Some(msg)))
+            }
+            Async::NotReady => {
+                *self = StreamState::Running(fut);
+                Ok(Async::NotReady)
+            }
         }
     }
 
-    fn poll_fetch(&mut self) -> Result<Async<Option<Multipart>>, Error> {
+    pub(crate) fn poll_fetch(&mut self, sock: &SockId) -> Result<Async<Option<Multipart>>, Error> {
         match self.polling() {
-            StreamState::Pending(sock) => {
-                let fut = MultipartResponse::new(sock);
-
-                self.poll_fut(fut)
-            }
-            StreamState::Running(fut) => self.poll_fut(fut),
+            StreamState::Pending => self.poll_fut(sock, RecvState::Pending),
+            StreamState::Running(fut) => self.poll_fut(sock, fut),
             StreamState::Polling => {
                 error!("Called polling while polling");
                 return Err(Error::Polling);
@@ -71,6 +69,7 @@ where
     T: From<Socket>,
 {
     state: StreamState,
+    sock: SockId,
     phantom: PhantomData<T>,
 }
 
@@ -80,7 +79,8 @@ where
 {
     pub fn new(sock: SockId) -> Self {
         MultipartStream {
-            state: StreamState::Pending(sock),
+            state: StreamState::Pending,
+            sock,
             phantom: PhantomData,
         }
     }
@@ -94,6 +94,34 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        self.state.poll_fetch()
+        match self.state.poll_fetch(&self.sock) {
+            Ok(Async::Ready(Some(multipart))) => {
+                for msg in multipart.iter() {
+                    if let Some(msg) = msg.as_str() {
+                        trace!("Received {} from {}", msg, &self.sock);
+                    }
+                }
+                Ok(Async::Ready(Some(multipart)))
+            }
+            other => other,
+        }
+    }
+}
+
+impl<T> fmt::Debug for MultipartStream<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartStream({:?})", self.sock)
+    }
+}
+
+impl<T> fmt::Display for MultipartStream<T>
+where
+    T: From<Socket>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MultipartStream({})", self.sock)
     }
 }
