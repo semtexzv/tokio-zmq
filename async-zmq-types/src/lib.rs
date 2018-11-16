@@ -37,6 +37,13 @@ pub use crate::{
 
 /* ----------------------------------TRAITS---------------------------------- */
 
+pub trait IntoSocket<T, U>: Sized
+where
+    T: From<U>,
+{
+    fn into_socket(self) -> T;
+}
+
 /// Define all actions possible on a socket
 ///
 /// This should be generic enough to implement over any executor. On Tokio, this might consist of
@@ -52,13 +59,13 @@ where
     type Response: Future<Item = (Multipart, T)>;
 
     /// A Stream of multiparts received from a ZMQ socket
-    type Stream: Stream<Item = Multipart>;
+    type Stream: Stream<Item = Multipart> + IntoSocket<T, Self>;
 
     /// A Sink that sends multiparts to a ZMQ socket
-    type Sink: Sink<SinkItem = Multipart>;
+    type Sink: Sink<SinkItem = Multipart> + IntoSocket<T, Self>;
 
     /// A Sink and Stream that sends and receives multiparts from a ZMQ socket
-    type SinkStream: Stream<Item = Multipart> + Sink<SinkItem = Multipart>;
+    type SinkStream: Stream<Item = Multipart> + Sink<SinkItem = Multipart> + IntoSocket<T, Self>;
 
     fn send(self, multipart: Multipart) -> Self::Request;
 
