@@ -152,9 +152,25 @@ struct Channel {
 
 impl Channel {
     fn notify(&self) {
+        self.drain();
+
         if let Err(e) = (&self.tx).write(&[1]) {
             error!("Error notifying channel, {}", e);
         }
+    }
+
+    fn drain(&self) -> bool {
+        let mut new_data = false;
+        loop {
+            match (&self.rx).read(&mut [0; 32]) {
+                Ok(_) => {
+                    new_data = true;
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("I/O error: {}", e),
+            }
+        }
+        new_data
     }
 
     #[cfg(unix)]
@@ -195,17 +211,7 @@ impl Receiver {
 
     /// Returns whether there are messages to look at
     fn drain(&self) -> bool {
-        let mut new_data = false;
-        loop {
-            match (&self.channel.rx).read(&mut [0; 32]) {
-                Ok(_) => {
-                    new_data = true;
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => panic!("I/O error: {}", e),
-            }
-        }
-        new_data
+        self.channel.drain()
     }
 }
 
@@ -882,7 +888,7 @@ impl PollThread {
 
         poll_items.push(io_item);
 
-        let _num_signalled = match poll(&mut poll_items, -1) {
+        let _num_signalled = match poll(&mut poll_items, 30) {
             Ok(num) => num,
             Err(e) => {
                 error!("Error in poll, {}", e);
