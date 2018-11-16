@@ -17,6 +17,7 @@
  * along with Futures ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+use failure::Fail;
 use futures::sync::oneshot::Canceled;
 
 #[derive(Clone, Debug, Fail)]

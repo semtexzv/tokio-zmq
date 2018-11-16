@@ -19,9 +19,10 @@
 
 //! This module defines all the socket wrapper types that can be used with futures.
 
+use async_zmq_derive::SocketWrapper;
 use zmq::SocketType::{self, DEALER, PAIR, PUB, PULL, PUSH, REP, REQ, ROUTER, SUB, XPUB, XSUB};
 
-use crate::{poll_thread::SockId, socket::Socket};
+use crate::{polling::SockId, socket::Socket};
 
 // needed for derive
 type RawSocket = SockId;

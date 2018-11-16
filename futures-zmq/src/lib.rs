@@ -17,26 +17,19 @@
  * along with Futures ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#[macro_use]
-extern crate async_zmq_derive;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-
 pub mod async_types;
 pub mod error;
-mod poll_thread;
+mod polling;
 pub mod prelude;
 mod socket;
+
+use lazy_static::lazy_static;
 
 pub use async_zmq_types::Multipart;
 
 pub use self::{
     error::Error,
-    poll_thread::{RecvFuture, SendFuture, Session},
+    polling::{RecvFuture, SendFuture, Session},
     socket::{
         types::{Dealer, Pair, Pub, Pull, Push, Rep, Req, Router, Sub, Xpub, Xsub},
         Socket,

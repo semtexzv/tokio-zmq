@@ -21,8 +21,9 @@ use std::{collections::VecDeque, fmt, marker::PhantomData, mem};
 
 use async_zmq_types::Multipart;
 use futures::{Async, AsyncSink, Sink};
+use log::error;
 
-use crate::{async_types::SendState, error::Error, poll_thread::SockId, socket::Socket};
+use crate::{async_types::SendState, error::Error, polling::SockId, socket::Socket};
 
 pub(crate) enum SinkState {
     Pending,

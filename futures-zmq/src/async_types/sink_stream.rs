@@ -21,11 +21,12 @@ use std::{collections::VecDeque, fmt, marker::PhantomData};
 
 use async_zmq_types::Multipart;
 use futures::{Async, AsyncSink, Sink, Stream};
+use log::trace;
 
 use crate::{
     async_types::{SinkState, StreamState},
     error::Error,
-    poll_thread::SockId,
+    polling::SockId,
     socket::Socket,
 };
 

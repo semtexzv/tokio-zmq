@@ -21,8 +21,9 @@ use std::{fmt, marker::PhantomData, mem};
 
 use async_zmq_types::Multipart;
 use futures::{Async, Future};
+use log::{error, trace};
 
-use crate::{error::Error, poll_thread::SockId, socket::Socket, RecvFuture, SendFuture, SESSION};
+use crate::{error::Error, polling::SockId, socket::Socket, RecvFuture, SendFuture, SESSION};
 
 pub(crate) enum SendState {
     Pending(Multipart),

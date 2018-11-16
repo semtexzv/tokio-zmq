@@ -31,7 +31,7 @@ use crate::{
     async_types::{
         MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream, MultipartStream,
     },
-    poll_thread::SockId,
+    polling::SockId,
 };
 
 /// Defines the raw Socket type. This type should never be interacted with directly, except to

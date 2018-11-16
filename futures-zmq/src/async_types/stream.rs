@@ -21,8 +21,9 @@ use std::{fmt, marker::PhantomData, mem};
 
 use async_zmq_types::Multipart;
 use futures::{Async, Stream};
+use log::{error, trace};
 
-use crate::{async_types::RecvState, error::Error, poll_thread::SockId, socket::Socket};
+use crate::{async_types::RecvState, error::Error, polling::SockId, socket::Socket};
 
 pub(crate) enum StreamState {
     Pending,
