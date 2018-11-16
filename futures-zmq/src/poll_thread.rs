@@ -31,10 +31,7 @@ use std::{
     net::{TcpListener, TcpStream},
     os::raw::c_void,
     ptr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
-    },
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -149,23 +146,15 @@ impl PollKind {
 }
 
 struct Channel {
-    ready: AtomicBool,
     tx: TcpStream,
     rx: TcpStream,
 }
 
 impl Channel {
-    fn swap_false(&self) -> bool {
-        self.ready.swap(false, Ordering::SeqCst)
-    }
-
-    fn swap_true(&self) -> bool {
-        self.ready.swap(true, Ordering::SeqCst)
-    }
-
     fn notify(&self) {
-        self.swap_true();
-        let _ = (&self.tx).write(&[1]);
+        if let Err(e) = (&self.tx).write(&[1]) {
+            error!("Error notifying channel, {}", e);
+        }
     }
 
     #[cfg(unix)]
@@ -187,7 +176,9 @@ struct Sender {
 
 impl Sender {
     fn send(&self, request: Request) {
-        let _ = self.tx.send(request);
+        if let Err(_) = self.tx.send(request) {
+            error!("Error sending request");
+        }
         self.channel.notify();
     }
 }
@@ -204,15 +195,17 @@ impl Receiver {
 
     /// Returns whether there are messages to look at
     fn drain(&self) -> bool {
+        let mut new_data = false;
         loop {
             match (&self.channel.rx).read(&mut [0; 32]) {
-                Ok(_) => {}
+                Ok(_) => {
+                    new_data = true;
+                }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => panic!("I/O error: {}", e),
             }
         }
-
-        self.channel.swap_false()
+        new_data
     }
 }
 
@@ -235,7 +228,6 @@ impl Session {
         conn2.set_nonblocking(true).unwrap();
 
         let channel = Arc::new(Channel {
-            ready: AtomicBool::new(false),
             tx: conn1,
             rx: conn2,
         });
@@ -260,9 +252,11 @@ impl Session {
             PollThread::new(tx2, rx).run();
         });
 
+        /*
         thread::spawn(move || {
             WakeThread::new(tx3.channel, wake_rx).run();
         });
+        */
 
         Session {
             inner: InnerSession::init(tx, wake_tx),
@@ -684,7 +678,6 @@ enum Action {
 }
 
 struct PollThread {
-    flush_count: usize,
     next_sock_id: usize,
     tx: Sender,
     rx: Receiver,
@@ -700,7 +693,6 @@ impl PollThread {
         let channel = rx.channel.clone();
 
         PollThread {
-            flush_count: 0,
             next_sock_id: 0,
             tx,
             rx,
@@ -935,24 +927,9 @@ impl PollThread {
         }
     }
 
-    fn check_flush_count(&mut self) {
-        if self.flush_count == 10 {
-            self.flush_count = 0;
-            /*
-            for pollable in self.sockets.values_mut() {
-                pollable.flush_multiparts();
-                pollable.fetch_multiparts();
-            }
-            */
-        }
-
-        self.flush_count += 1;
-    }
-
     fn turn(&mut self) {
         self.drop_inactive();
         self.try_recv();
         self.poll();
-        self.check_flush_count();
     }
 }
