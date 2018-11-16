@@ -19,7 +19,7 @@
 
 use std::{collections::VecDeque, fmt, marker::PhantomData, mem};
 
-use async_zmq_types::Multipart;
+use async_zmq_types::{IntoSocket, Multipart};
 use futures::{Async, AsyncSink, Sink};
 use log::error;
 
@@ -124,6 +124,15 @@ where
             buffer_size,
             phantom: PhantomData,
         }
+    }
+}
+
+impl<T> IntoSocket<T, Socket> for MultipartSink<T>
+where
+    T: From<Socket>,
+{
+    fn into_socket(self) -> T {
+        T::from(Socket::from_sock(self.sock))
     }
 }
 

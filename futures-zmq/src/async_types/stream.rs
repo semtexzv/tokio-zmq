@@ -19,7 +19,7 @@
 
 use std::{fmt, marker::PhantomData, mem};
 
-use async_zmq_types::Multipart;
+use async_zmq_types::{IntoSocket, Multipart};
 use futures::{Async, Stream};
 use log::{error, trace};
 
@@ -84,6 +84,15 @@ where
             sock,
             phantom: PhantomData,
         }
+    }
+}
+
+impl<T> IntoSocket<T, Socket> for MultipartStream<T>
+where
+    T: From<Socket>,
+{
+    fn into_socket(self) -> T {
+        T::from(Socket::from_sock(self.sock))
     }
 }
 
