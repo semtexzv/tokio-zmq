@@ -41,8 +41,11 @@ where
 
         let fut = lazy(move || res)
             .from_err()
-            .and_then(|sock| SESSION.init(sock))
-            .map(Socket::from_sock)
+            .and_then(|sock| {
+                let session = SESSION.local_session();
+                session.init(sock).map(move |socket| (socket, session))
+            })
+            .map(|(sock, sess)| Socket::from_sock_and_session(sock, sess))
             .map(T::from);
 
         Box::new(fut)
@@ -55,8 +58,11 @@ impl<'a> Build<Sub> for SubConfig<'a> {
 
         let fut = lazy(move || sock)
             .from_err()
-            .and_then(|sock| SESSION.init(sock))
-            .map(Socket::from_sock)
+            .and_then(|sock| {
+                let session = SESSION.local_session();
+                session.init(sock).map(move |socket| (socket, session))
+            })
+            .map(|(sock, sess)| Socket::from_sock_and_session(sock, sess))
             .map(Sub::from);
 
         Box::new(fut)
@@ -69,8 +75,11 @@ impl<'a> Build<Pair> for PairConfig<'a> {
 
         let fut = lazy(move || sock)
             .from_err()
-            .and_then(|sock| SESSION.init(sock))
-            .map(Socket::from_sock)
+            .and_then(|sock| {
+                let session = SESSION.local_session();
+                session.init(sock).map(move |sock| (sock, session))
+            })
+            .map(|(sock, sess)| Socket::from_sock_and_session(sock, sess))
             .map(Pair::from);
 
         Box::new(fut)

@@ -31,14 +31,14 @@ use crate::{
     async_types::{
         MultipartRequest, MultipartResponse, MultipartSink, MultipartSinkStream, MultipartStream,
     },
-    polling::SockId,
+    polling::{LocalSession, SockId},
 };
 
 /// Defines the raw Socket type. This type should never be interacted with directly, except to
 /// create new instances of wrapper types.
 pub struct Socket {
-    // Reads and Writes data
     sock: SockId,
+    session: LocalSession,
 }
 
 impl Socket {
@@ -59,8 +59,8 @@ impl Socket {
     ///
     /// This assumes that `sock` is already configured properly. Please don't call this directly
     /// unless you know what you're doing.
-    pub fn from_sock(sock: SockId) -> Self {
-        Socket { sock }
+    pub fn from_sock_and_session(sock: SockId, session: LocalSession) -> Self {
+        Socket { sock, session }
     }
 }
 
@@ -77,29 +77,29 @@ where
     type SinkStream = MultipartSinkStream<T>;
 
     fn send(self, multipart: Multipart) -> Self::Request {
-        MultipartRequest::new(self.sock, multipart)
+        MultipartRequest::new(self.session, self.sock, multipart)
     }
 
     fn recv(self) -> Self::Response {
-        MultipartResponse::new(self.sock)
+        MultipartResponse::new(self.session, self.sock)
     }
 
     fn stream(self) -> Self::Stream {
-        MultipartStream::new(self.sock)
+        MultipartStream::new(self.session, self.sock)
     }
 
     fn sink(self, buffer_size: usize) -> Self::Sink {
-        MultipartSink::new(self.sock, buffer_size)
+        MultipartSink::new(self.session, self.sock, buffer_size)
     }
 
     fn sink_stream(self, buffer_size: usize) -> Self::SinkStream {
-        MultipartSinkStream::new(self.sock, buffer_size)
+        MultipartSinkStream::new(self.session, self.sock, buffer_size)
     }
 }
 
-impl From<SockId> for Socket {
-    fn from(sock: SockId) -> Self {
-        Socket { sock }
+impl From<(SockId, LocalSession)> for Socket {
+    fn from((sock, session): (SockId, LocalSession)) -> Self {
+        Socket { sock, session }
     }
 }
 

@@ -23,7 +23,12 @@ use async_zmq_types::{IntoSocket, Multipart};
 use futures::{Async, Stream};
 use log::{error, trace};
 
-use crate::{async_types::RecvState, error::Error, polling::SockId, socket::Socket};
+use crate::{
+    async_types::RecvState,
+    error::Error,
+    polling::{LocalSession, SockId},
+    socket::Socket,
+};
 
 pub(crate) enum StreamState {
     Pending,
@@ -38,10 +43,11 @@ impl StreamState {
 
     fn poll_fut(
         &mut self,
+        session: &LocalSession,
         sock: &SockId,
         mut fut: RecvState,
     ) -> Result<Async<Option<Multipart>>, Error> {
-        match fut.poll_fetch(sock)? {
+        match fut.poll_fetch(session, sock)? {
             Async::Ready(msg) => {
                 *self = StreamState::Pending;
                 Ok(Async::Ready(Some(msg)))
@@ -53,10 +59,14 @@ impl StreamState {
         }
     }
 
-    pub(crate) fn poll_fetch(&mut self, sock: &SockId) -> Result<Async<Option<Multipart>>, Error> {
+    pub(crate) fn poll_fetch(
+        &mut self,
+        session: &LocalSession,
+        sock: &SockId,
+    ) -> Result<Async<Option<Multipart>>, Error> {
         match self.polling() {
-            StreamState::Pending => self.poll_fut(sock, RecvState::Pending),
-            StreamState::Running(fut) => self.poll_fut(sock, fut),
+            StreamState::Pending => self.poll_fut(session, sock, RecvState::Pending),
+            StreamState::Running(fut) => self.poll_fut(session, sock, fut),
             StreamState::Polling => {
                 error!("Called polling while polling");
                 return Err(Error::Polling);
@@ -70,6 +80,7 @@ where
     T: From<Socket>,
 {
     state: StreamState,
+    session: LocalSession,
     sock: SockId,
     phantom: PhantomData<T>,
 }
@@ -78,9 +89,10 @@ impl<T> MultipartStream<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: SockId) -> Self {
+    pub fn new(session: LocalSession, sock: SockId) -> Self {
         MultipartStream {
             state: StreamState::Pending,
+            session,
             sock,
             phantom: PhantomData,
         }
@@ -92,7 +104,7 @@ where
     T: From<Socket>,
 {
     fn into_socket(self) -> T {
-        T::from(Socket::from_sock(self.sock))
+        T::from(Socket::from_sock_and_session(self.sock, self.session))
     }
 }
 
@@ -104,7 +116,7 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        match self.state.poll_fetch(&self.sock) {
+        match self.state.poll_fetch(&self.session, &self.sock) {
             Ok(Async::Ready(Some(multipart))) => {
                 for msg in multipart.iter() {
                     if let Some(msg) = msg.as_str() {

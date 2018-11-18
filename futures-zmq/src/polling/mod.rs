@@ -156,6 +156,41 @@ impl Receiver {
     }
 }
 
+/// A local copy of Session
+///
+/// This is useful so we don't invoke mutex locks to send commands to the poll thread
+pub struct LocalSession {
+    sender: Sender,
+    #[allow(dead_code)]
+    session: Session,
+}
+
+impl LocalSession {
+    pub fn send(&self, id: &SockId, msg: Multipart) -> SendFuture {
+        let (tx, rx) = oneshot::channel();
+
+        self.sender.send(Request::SendMessage(id.0, msg, tx));
+
+        SendFuture { rx }
+    }
+
+    pub fn recv(&self, id: &SockId) -> RecvFuture {
+        let (tx, rx) = oneshot::channel();
+
+        self.sender.send(Request::ReceiveMessage(id.0, tx));
+
+        RecvFuture { rx }
+    }
+
+    pub fn init(&self, sock: Socket) -> InitFuture {
+        let (tx, rx) = oneshot::channel();
+
+        self.sender.send(Request::Init(sock, tx));
+
+        InitFuture { rx }
+    }
+}
+
 #[derive(Clone)]
 pub struct Session {
     inner: Arc<Mutex<Option<InnerSession>>>,
@@ -205,46 +240,11 @@ impl Session {
         *self.inner.lock().unwrap() = None;
     }
 
-    pub fn send(&self, id: &SockId, msg: Multipart) -> SendFuture {
-        let (tx, rx) = oneshot::channel();
+    pub fn local_session(&self) -> LocalSession {
+        let session = self.clone();
+        let sender = self.inner.lock().unwrap().as_ref().unwrap().tx.clone();
 
-        self.inner
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .clone()
-            .send(Request::SendMessage(id.0, msg, tx));
-
-        SendFuture { rx }
-    }
-
-    pub fn recv(&self, id: &SockId) -> RecvFuture {
-        let (tx, rx) = oneshot::channel();
-
-        self.inner
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .clone()
-            .send(Request::ReceiveMessage(id.0, tx));
-
-        RecvFuture { rx }
-    }
-
-    pub fn init(&self, sock: Socket) -> InitFuture {
-        let (tx, rx) = oneshot::channel();
-
-        self.inner
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .clone()
-            .send(Request::Init(sock, tx));
-
-        InitFuture { rx }
+        LocalSession { sender, session }
     }
 }
 
@@ -309,10 +309,6 @@ struct InnerSession {
 impl InnerSession {
     fn init(tx: Sender) -> Arc<Mutex<Option<Self>>> {
         Arc::new(Mutex::new(Some(InnerSession { tx })))
-    }
-
-    fn send(&self, request: Request) {
-        self.tx.send(request);
     }
 }
 

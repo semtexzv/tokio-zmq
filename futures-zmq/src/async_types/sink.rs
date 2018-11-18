@@ -23,7 +23,12 @@ use async_zmq_types::{IntoSocket, Multipart};
 use futures::{Async, AsyncSink, Sink};
 use log::error;
 
-use crate::{async_types::SendState, error::Error, polling::SockId, socket::Socket};
+use crate::{
+    async_types::SendState,
+    error::Error,
+    polling::{LocalSession, SockId},
+    socket::Socket,
+};
 
 pub(crate) enum SinkState {
     Pending,
@@ -36,8 +41,13 @@ impl SinkState {
         mem::replace(self, SinkState::Polling)
     }
 
-    fn poll_fut(&mut self, mut fut: SendState, sock: &SockId) -> Result<Async<()>, Error> {
-        match fut.poll_flush(sock)? {
+    fn poll_fut(
+        &mut self,
+        mut fut: SendState,
+        session: &LocalSession,
+        sock: &SockId,
+    ) -> Result<Async<()>, Error> {
+        match fut.poll_flush(session, sock)? {
             Async::Ready(_) => {
                 *self = SinkState::Pending;
                 Ok(Async::Ready(()))
@@ -51,14 +61,17 @@ impl SinkState {
 
     pub(crate) fn poll_flush(
         &mut self,
+        session: &LocalSession,
         sock: &SockId,
         multiparts: &mut VecDeque<Multipart>,
     ) -> Result<Async<()>, Error> {
         match self.polling() {
             SinkState::Pending => {
                 if let Some(multipart) = multiparts.pop_front() {
-                    if let Async::Ready(_) = self.poll_fut(SendState::Pending(multipart), sock)? {
-                        self.poll_flush(sock, multiparts)
+                    if let Async::Ready(_) =
+                        self.poll_fut(SendState::Pending(multipart), session, sock)?
+                    {
+                        self.poll_flush(session, sock, multiparts)
                     } else {
                         Ok(Async::NotReady)
                     }
@@ -68,8 +81,8 @@ impl SinkState {
                 }
             }
             SinkState::Running(fut) => {
-                if let Async::Ready(_) = self.poll_fut(fut, sock)? {
-                    self.poll_flush(sock, multiparts)
+                if let Async::Ready(_) = self.poll_fut(fut, session, sock)? {
+                    self.poll_flush(session, sock, multiparts)
                 } else {
                     Ok(Async::NotReady)
                 }
@@ -83,13 +96,14 @@ impl SinkState {
 
     pub(crate) fn start_send(
         &mut self,
+        session: &LocalSession,
         sock: &SockId,
         multiparts: &mut VecDeque<Multipart>,
         buffer_size: usize,
         multipart: Multipart,
     ) -> Result<AsyncSink<Multipart>, Error> {
         if multiparts.len() >= buffer_size {
-            if let Async::NotReady = self.poll_flush(sock, multiparts)? {
+            if let Async::NotReady = self.poll_flush(session, sock, multiparts)? {
                 if multiparts.len() >= 1 {
                     return Ok(AsyncSink::NotReady(multipart));
                 }
@@ -106,6 +120,7 @@ where
     T: From<Socket>,
 {
     state: SinkState,
+    session: LocalSession,
     sock: SockId,
     multiparts: VecDeque<Multipart>,
     buffer_size: usize,
@@ -116,9 +131,10 @@ impl<T> MultipartSink<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: SockId, buffer_size: usize) -> Self {
+    pub fn new(session: LocalSession, sock: SockId, buffer_size: usize) -> Self {
         MultipartSink {
             state: SinkState::Pending,
+            session,
             sock,
             multiparts: VecDeque::new(),
             buffer_size,
@@ -132,7 +148,7 @@ where
     T: From<Socket>,
 {
     fn into_socket(self) -> T {
-        T::from(Socket::from_sock(self.sock))
+        T::from(Socket::from_sock_and_session(self.sock, self.session))
     }
 }
 
@@ -148,6 +164,7 @@ where
         multipart: Self::SinkItem,
     ) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
         self.state.start_send(
+            &self.session,
             &self.sock,
             &mut self.multiparts,
             self.buffer_size,
@@ -156,7 +173,8 @@ where
     }
 
     fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
-        self.state.poll_flush(&self.sock, &mut self.multiparts)
+        self.state
+            .poll_flush(&self.session, &self.sock, &mut self.multiparts)
     }
 }
 

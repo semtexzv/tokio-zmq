@@ -26,7 +26,7 @@ use log::trace;
 use crate::{
     async_types::{SinkState, StreamState},
     error::Error,
-    polling::SockId,
+    polling::{LocalSession, SockId},
     socket::Socket,
 };
 
@@ -45,25 +45,31 @@ impl SinkStreamState {
 
     fn poll_flush(
         &mut self,
+        session: &LocalSession,
         sock: &SockId,
         multiparts: &mut VecDeque<Multipart>,
     ) -> Result<Async<()>, Error> {
-        self.sinking.poll_flush(sock, multiparts)
+        self.sinking.poll_flush(session, sock, multiparts)
     }
 
-    fn poll_fetch(&mut self, sock: &SockId) -> Result<Async<Option<Multipart>>, Error> {
-        self.streaming.poll_fetch(sock)
+    fn poll_fetch(
+        &mut self,
+        session: &LocalSession,
+        sock: &SockId,
+    ) -> Result<Async<Option<Multipart>>, Error> {
+        self.streaming.poll_fetch(session, sock)
     }
 
     fn start_send(
         &mut self,
+        session: &LocalSession,
         sock: &SockId,
         multiparts: &mut VecDeque<Multipart>,
         buffer_size: usize,
         multipart: Multipart,
     ) -> Result<AsyncSink<Multipart>, Error> {
         self.sinking
-            .start_send(sock, multiparts, buffer_size, multipart)
+            .start_send(session, sock, multiparts, buffer_size, multipart)
     }
 }
 
@@ -72,6 +78,7 @@ where
     T: From<Socket>,
 {
     state: SinkStreamState,
+    session: LocalSession,
     sock: SockId,
     multiparts: VecDeque<Multipart>,
     buffer_size: usize,
@@ -82,9 +89,10 @@ impl<T> MultipartSinkStream<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: SockId, buffer_size: usize) -> Self {
+    pub fn new(session: LocalSession, sock: SockId, buffer_size: usize) -> Self {
         MultipartSinkStream {
             state: SinkStreamState::new(),
+            session,
             sock,
             multiparts: VecDeque::new(),
             buffer_size,
@@ -98,7 +106,7 @@ where
     T: From<Socket>,
 {
     fn into_socket(self) -> T {
-        T::from(Socket::from_sock(self.sock))
+        T::from(Socket::from_sock_and_session(self.sock, self.session))
     }
 }
 
@@ -114,6 +122,7 @@ where
         multipart: Self::SinkItem,
     ) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
         self.state.start_send(
+            &self.session,
             &self.sock,
             &mut self.multiparts,
             self.buffer_size,
@@ -122,7 +131,8 @@ where
     }
 
     fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
-        self.state.poll_flush(&self.sock, &mut self.multiparts)
+        self.state
+            .poll_flush(&self.session, &self.sock, &mut self.multiparts)
     }
 }
 
@@ -134,7 +144,7 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        match self.state.poll_fetch(&self.sock) {
+        match self.state.poll_fetch(&self.session, &self.sock) {
             Ok(Async::Ready(Some(multipart))) => {
                 for msg in multipart.iter() {
                     if let Some(msg) = msg.as_str() {

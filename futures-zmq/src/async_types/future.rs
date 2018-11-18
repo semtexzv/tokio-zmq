@@ -23,7 +23,12 @@ use async_zmq_types::Multipart;
 use futures::{Async, Future};
 use log::{error, trace};
 
-use crate::{error::Error, polling::SockId, socket::Socket, RecvFuture, SendFuture, SESSION};
+use crate::{
+    error::Error,
+    polling::{LocalSession, SockId},
+    socket::Socket,
+    RecvFuture, SendFuture,
+};
 
 pub(crate) enum SendState {
     Pending(Multipart),
@@ -53,7 +58,11 @@ impl SendState {
         }
     }
 
-    pub(crate) fn poll_flush(&mut self, sock: &SockId) -> Result<Async<()>, Error> {
+    pub(crate) fn poll_flush(
+        &mut self,
+        session: &LocalSession,
+        sock: &SockId,
+    ) -> Result<Async<()>, Error> {
         match self.polling() {
             SendState::Pending(multipart) => {
                 for msg in multipart.iter() {
@@ -61,7 +70,7 @@ impl SendState {
                         trace!("Sending {} to {}", msg, sock);
                     }
                 }
-                self.poll_fut(SESSION.send(sock, multipart))
+                self.poll_fut(session.send(sock, multipart))
             }
             SendState::Running(fut) => self.poll_fut(fut),
             SendState::Polling => {
@@ -77,6 +86,7 @@ where
     T: From<Socket>,
 {
     state: SendState,
+    session: Option<LocalSession>,
     sock: Option<SockId>,
     phantom: PhantomData<T>,
 }
@@ -85,9 +95,10 @@ impl<T> MultipartRequest<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: SockId, multipart: Multipart) -> Self {
+    pub fn new(session: LocalSession, sock: SockId, multipart: Multipart) -> Self {
         MultipartRequest {
             state: SendState::Pending(multipart),
+            session: Some(session),
             sock: Some(sock),
             phantom: PhantomData,
         }
@@ -103,15 +114,17 @@ where
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         let sock = self.sock.take().unwrap();
+        let session = self.session.take().unwrap();
 
-        match self.state.poll_flush(&sock)? {
+        match self.state.poll_flush(&session, &sock)? {
             Async::Ready(_) => {
-                let socket = Socket::from_sock(sock);
+                let socket = Socket::from_sock_and_session(sock, session);
 
                 Ok(Async::Ready(T::from(socket)))
             }
             Async::NotReady => {
                 self.sock = Some(sock);
+                self.session = Some(session);
 
                 Ok(Async::NotReady)
             }
@@ -158,9 +171,13 @@ impl RecvState {
         }
     }
 
-    pub(crate) fn poll_fetch(&mut self, sock: &SockId) -> Result<Async<Multipart>, Error> {
+    pub(crate) fn poll_fetch(
+        &mut self,
+        session: &LocalSession,
+        sock: &SockId,
+    ) -> Result<Async<Multipart>, Error> {
         match self.polling() {
-            RecvState::Pending => self.poll_fut(SESSION.recv(sock)),
+            RecvState::Pending => self.poll_fut(session.recv(sock)),
             RecvState::Running(fut) => self.poll_fut(fut),
             RecvState::Polling => {
                 error!("Called polling while polling");
@@ -176,6 +193,7 @@ where
 {
     state: RecvState,
     sock: Option<SockId>,
+    session: Option<LocalSession>,
     phantom: PhantomData<T>,
 }
 
@@ -183,10 +201,11 @@ impl<T> MultipartResponse<T>
 where
     T: From<Socket>,
 {
-    pub fn new(sock: SockId) -> Self {
+    pub fn new(session: LocalSession, sock: SockId) -> Self {
         MultipartResponse {
             state: RecvState::Pending,
             sock: Some(sock),
+            session: Some(session),
             phantom: PhantomData,
         }
     }
@@ -201,20 +220,22 @@ where
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         let sock = self.sock.take().unwrap();
+        let session = self.session.take().unwrap();
 
-        match self.state.poll_fetch(&sock)? {
+        match self.state.poll_fetch(&session, &sock)? {
             Async::Ready(multipart) => {
                 for msg in multipart.iter() {
                     if let Some(msg) = msg.as_str() {
                         trace!("Received {} from {}", msg, sock);
                     }
                 }
-                let socket = Socket::from_sock(sock);
+                let socket = Socket::from_sock_and_session(sock, session);
 
                 Ok(Async::Ready((multipart, T::from(socket))))
             }
             Async::NotReady => {
                 self.sock = Some(sock);
+                self.session = Some(session);
 
                 Ok(Async::NotReady)
             }

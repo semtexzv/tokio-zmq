@@ -22,10 +22,13 @@
 use async_zmq_derive::SocketWrapper;
 use zmq::SocketType::{self, DEALER, PAIR, PUB, PULL, PUSH, REP, REQ, ROUTER, SUB, XPUB, XSUB};
 
-use crate::{polling::SockId, socket::Socket};
+use crate::{
+    polling::{LocalSession, SockId},
+    socket::Socket,
+};
 
 // needed for derive
-type RawSocket = SockId;
+type RawSocket = (SockId, LocalSession);
 
 /* -------------------------------------------------------------------------- */
 
