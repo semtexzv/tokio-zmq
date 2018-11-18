@@ -1,7 +1,7 @@
 [package]
 name = "futures-zmq"
 description = "Provides Futures abstractions for ZeroMQ on any futures executor"
-version = "0.3.0"
+version = "0.3.1"
 license = "GPL-3.0"
 authors = ["asonix <asonix@asonix.dog>"]
 repository = "https://git.asonix.dog/asonix/async-zmq"
