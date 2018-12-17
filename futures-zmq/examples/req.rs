@@ -32,8 +32,8 @@ use futures_zmq::{prelude::*, Multipart, Req};
 fn build_multipart(i: usize) -> Multipart {
     let mut multipart = Multipart::new();
 
-    let msg1 = zmq::Message::from_slice(format!("Hewwo? {}", i).as_bytes()).unwrap();
-    let msg2 = zmq::Message::from_slice(format!("Mr Obama??? {}", i).as_bytes()).unwrap();
+    let msg1 = zmq::Message::from_slice(format!("Hewwo? {}", i).as_bytes());
+    let msg2 = zmq::Message::from_slice(format!("Mr Obama??? {}", i).as_bytes());
 
     multipart.push_back(msg1);
     multipart.push_back(msg2);

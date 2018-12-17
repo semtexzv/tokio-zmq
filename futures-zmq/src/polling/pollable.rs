@@ -181,16 +181,16 @@ impl Pollable {
         message: Message,
         flags: i32,
     ) -> Result<Option<Message>, zmq::Error> {
-        let msg_clone_res = Message::from_slice(&message);
+        let msg_clone = Message::from_slice(&message);
 
-        match self.sock.send_msg(message, flags) {
+        match self.sock.send(message, flags) {
             Ok(_) => {
                 trace!("SENT msg, {}", self.id);
                 Ok(None)
             }
             Err(zmq::Error::EAGAIN) => {
                 warn!("EAGAIN while sending, {}", self.id);
-                msg_clone_res.map(Some)
+                Ok(Some(msg_clone))
             }
             Err(e) => Err(e),
         }
@@ -264,7 +264,7 @@ impl PollKind {
             PollKind::SendMsg => POLLOUT,
             PollKind::RecvMsg => POLLIN,
             PollKind::SendRecv => POLLIN | POLLOUT,
-            _ => 0,
+            _ => PollEvents::empty(),
         }
     }
 

@@ -11,7 +11,7 @@ keywords = ["zmq", "zeromq", "futures", "tokio", "async"]
 [dependencies]
 failure = "0.1"
 futures = "0.1"
-zmq = "0.8"
+zmq = "0.9"
 
 [dev-dependencies]
 tokio = "0.1"

@@ -68,17 +68,17 @@ fn publisher_thread() {
 
             iter_ok(0..SUBSCRIBERS)
                 .zip(sync_stream)
-                .map(|(_, _)| zmq::Message::from_slice(b"").unwrap().into())
+                .map(|(_, _)| zmq::Message::from_slice(b"").into())
                 .forward(sync_sink)
                 .and_then(move |_| {
                     println!("Broadcasting message");
 
                     iter_ok(0..MESSAGES)
-                        .map(|_| zmq::Message::from_slice(b"Rhubarb").unwrap().into())
+                        .map(|_| zmq::Message::from_slice(b"Rhubarb").into())
                         .forward(publisher.sink(25))
                 })
                 .and_then(|(_stream, sink)| {
-                    let msg = zmq::Message::from_slice(b"END").unwrap();
+                    let msg = zmq::Message::from_slice(b"END");
 
                     sink.send(msg.into())
                 })
@@ -100,7 +100,7 @@ fn subscriber_thread() {
 
     let syncclient_fut = Req::builder(ctx).connect("tcp://localhost:5562").build();
 
-    let msg = zmq::Message::from_slice(b"").unwrap();
+    let msg = zmq::Message::from_slice(b"");
 
     let runner = subscriber_fut
         .join(syncclient_fut)

@@ -35,7 +35,7 @@ use super::{
 pub struct MyPollItem<'a> {
     socket: *mut c_void,
     fd: zmq_sys::RawFd,
-    events: c_short,
+    events: PollEvents,
     revents: c_short,
     marker: PhantomData<&'a Socket>,
 }
