@@ -148,7 +148,7 @@ fn client_task(client_num: usize) -> usize {
         .connect("tcp://localhost:5672")
         .build();
 
-    let msg = zmq::Message::from_slice(b"HELLO").unwrap();
+    let msg = zmq::Message::from_slice(b"HELLO");
     let fut = client_fut.and_then(move |client| {
         client
             .send(msg.into())
@@ -183,7 +183,7 @@ fn worker_task(worker_num: usize) -> usize {
         .connect("tcp://localhost:5673")
         .build();
 
-    let msg = zmq::Message::from_slice(b"READY").unwrap();
+    let msg = zmq::Message::from_slice(b"READY");
 
     let fut = worker_fut
         .join(control_fut)
@@ -208,7 +208,7 @@ fn worker_task(worker_num: usize) -> usize {
                                 envelope.addr().as_str().unwrap()
                             );
 
-                            let msg = zmq::Message::from_slice(b"OK")?;
+                            let msg = zmq::Message::from_slice(b"OK");
                             envelope.set_request(msg);
 
                             Ok(envelope.into())
@@ -312,7 +312,7 @@ fn broker_task() {
                     response.push_back(worker_id);
                     response.push_back(empty);
                     response.push_back(client_id);
-                    response.push_back(zmq::Message::new()?);
+                    response.push_back(zmq::Message::new());
                     response.push_back(request);
 
                     Ok(response)
@@ -400,7 +400,7 @@ fn main() {
             // Signal end when all clients have joined
             tokio::run(
                 control_fut
-                    .and_then(|control| control.send(zmq::Message::new().unwrap().into()))
+                    .and_then(|control| control.send(zmq::Message::new().into()))
                     .map(|_| ())
                     .or_else(|e| {
                         println!("Error in main loop {}, {:?}", e, e);

@@ -57,7 +57,7 @@ use crate::{
 ///         .and_then(|zpub| {
 ///             let sink = zpub.sink(25);
 ///
-///             let msg = zmq::Message::from_slice(b"Some message").unwrap();
+///             let msg = zmq::Message::from_slice(b"Some message");
 ///
 ///             sink.send(msg.into())
 ///         });
