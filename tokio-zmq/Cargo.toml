@@ -4,7 +4,7 @@ description = "Provides Futures abstractions for ZeroMQ on the Tokio event-loop"
 version = "0.8.0"
 license = "GPL-3.0"
 authors = ["asonix <asonix@asonix.dog>"]
-repository = "https://git.asonix.dog/asonix/tokio-zmq"
+repository = "https://git.asonix.dog/asonix/async-zmq"
 readme = "README.md"
 edition = "2018"
 keywords = ["zmq", "zeromq", "futures", "tokio"]
@@ -17,10 +17,10 @@ log = "0.4"
 mio = "0.6"
 tokio-timer = "0.2.6"
 tokio-reactor = "0.1.5"
-zmq = "0.8"
+zmq = "0.9"
 
 [dev-dependencies]
-env_logger = "0.5"
+env_logger = "0.6"
 tokio-executor = "0.1.4"
 tokio = "0.1.8"
-rand = "0.5"
+rand = "0.6"

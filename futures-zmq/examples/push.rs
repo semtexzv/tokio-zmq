@@ -74,8 +74,8 @@ fn main() {
         .build();
     let sink2_fut = Push::builder(ctx).connect("tcp://localhost:5558").build();
 
-    let start_msg = zmq::Message::from_slice(b"START").unwrap().into();
-    let stop_msg = zmq::Message::from_slice(b"STOP").unwrap().into();
+    let start_msg = zmq::Message::from_slice(b"START").into();
+    let stop_msg = zmq::Message::from_slice(b"STOP").into();
 
     let interval = Interval::new(Instant::now(), Duration::from_millis(200));
 
@@ -93,7 +93,7 @@ fn main() {
 
                         let msg = format!("{}", i);
                         let msg = msg.as_bytes();
-                        let msg = zmq::Message::from_slice(msg)?;
+                        let msg = zmq::Message::from_slice(msg);
 
                         Ok(msg.into())
                     })

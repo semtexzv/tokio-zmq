@@ -60,7 +60,7 @@ use crate::{
 /// #     rep.and_then(|rep| {
 /// #       let socket = rep.socket();
 /// #       let (sock, file) = socket.inner();
-/// #       let msg = zmq::Message::from_slice(format!("Hey").as_bytes()).unwrap();
+/// #       let msg = zmq::Message::from_slice(format!("Hey").as_bytes());
 /// MultipartRequest::new(sock, file, msg.into()).and_then(|_: Rep| {
 ///     // succesfull request
 /// #       Ok(())

@@ -78,7 +78,7 @@ impl RequestFuture {
         msg: Message,
         place: &MsgPlace,
     ) -> Result<Option<Message>, Error> {
-        let events = sock.get_events()? as i16;
+        let events = sock.get_events()?;
 
         if (events & POLLOUT) != POLLOUT {
             file.clear_write_ready()?;
@@ -90,9 +90,9 @@ impl RequestFuture {
 
         let flags = DONTWAIT | if *place == MsgPlace::Last { 0 } else { SNDMORE };
 
-        let msg_clone = Message::from_slice(&msg)?;
+        let msg_clone = Message::from_slice(&msg);
 
-        match sock.send_msg(msg, flags) {
+        match sock.send(msg, flags) {
             Ok(_) => Ok(None),
             Err(zmq::Error::EAGAIN) => {
                 // return message in future
@@ -106,7 +106,7 @@ impl RequestFuture {
     fn check_write(&mut self, sock: &zmq::Socket, file: &EventedFile) -> Result<bool, Error> {
         if let Async::NotReady = file.poll_write_ready()? {
             // Get the events currently waiting on the socket
-            let events = sock.get_events()? as i16;
+            let events = sock.get_events()?;
             if (events & POLLOUT) == POLLOUT {
                 // manually schedule a wakeup and procede
                 file.clear_write_ready()?;
@@ -145,7 +145,7 @@ impl ResponseFuture {
         file: &EventedFile,
         multipart: &mut Multipart,
     ) -> Result<Async<Multipart>, Error> {
-        let events = sock.get_events()? as i16;
+        let events = sock.get_events()?;
 
         if (events & POLLIN) != POLLIN {
             file.clear_read_ready(Ready::readable())?;
@@ -179,7 +179,7 @@ impl ResponseFuture {
     }
 
     fn recv_msg(&mut self, sock: &zmq::Socket) -> Result<Async<Message>, Error> {
-        let mut msg = Message::new()?;
+        let mut msg = Message::new();
 
         match sock.recv(&mut msg, DONTWAIT) {
             Ok(_) => {
@@ -196,7 +196,7 @@ impl ResponseFuture {
 
     fn check_read(&mut self, sock: &zmq::Socket, file: &EventedFile) -> Result<bool, Error> {
         if let Async::NotReady = file.poll_read_ready(Ready::readable())? {
-            let events = sock.get_events()? as i16;
+            let events = sock.get_events()?;
             if (events & POLLIN) == POLLIN {
                 // manually schedule a wakeup and procede
                 file.clear_read_ready(Ready::readable())?;

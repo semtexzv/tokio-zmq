@@ -75,9 +75,7 @@ fn main() {
             .map_err(Error::from)
             .and_then(|_| {
                 println!("Sending 'Hello'");
-                zmq::Message::from_slice(b"Hello")
-                    .map_err(Error::from)
-                    .map(|msg| msg.into())
+                Ok(zmq::Message::from_slice(b"Hello").into())
             })
             .forward(zpub.sink(25))
     });
