@@ -17,40 +17,16 @@
  * along with Futures ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-use std::{
-    collections::BTreeMap, marker::PhantomData, mem::transmute, os::raw::c_void, ptr, sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use futures::{executor, sync::oneshot, Async};
-use libc::c_short;
 use log::{error, info, trace};
-use zmq::{poll, PollEvents, PollItem, Socket, POLLIN};
+use zmq::{poll, PollItem, POLLIN};
 
 use super::{
     Channel, CheckCanceled, Error, NotifyCanceled, Pollable, Receiver, Request, Response, Sender,
     SockId,
 };
-
-#[repr(C)]
-pub struct MyPollItem<'a> {
-    socket: *mut c_void,
-    fd: zmq_sys::RawFd,
-    events: PollEvents,
-    revents: c_short,
-    marker: PhantomData<&'a Socket>,
-}
-
-impl<'a> MyPollItem<'a> {
-    fn from_fd(fd: zmq_sys::RawFd, events: PollEvents) -> Self {
-        MyPollItem {
-            socket: ptr::null_mut(),
-            fd,
-            events,
-            revents: 0,
-            marker: PhantomData,
-        }
-    }
-}
 
 enum Action {
     Snd(usize),
@@ -256,9 +232,7 @@ impl PollThread {
             .map(|(id, pollable)| (id, pollable.as_poll_item()))
             .unzip();
 
-        let io_item = MyPollItem::from_fd(self.channel.read_fd(), POLLIN);
-
-        let io_item: PollItem = unsafe { transmute(io_item) };
+        let io_item = PollItem::from_fd(self.channel.read_fd(), POLLIN);
 
         poll_items.push(io_item);
 

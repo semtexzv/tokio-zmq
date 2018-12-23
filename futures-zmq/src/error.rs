@@ -20,7 +20,7 @@
 use failure::Fail;
 use futures::sync::oneshot::Canceled;
 
-#[derive(Clone, Debug, Fail)]
+#[derive(Debug, Fail)]
 pub enum Error {
     #[fail(display = "Error in zeroMQ, {}", _0)]
     Zmq(#[cause] zmq::Error),

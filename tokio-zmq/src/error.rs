@@ -17,8 +17,9 @@
  * along with Tokio ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-use std::{error::Error as StdError, fmt, io::Error as IoError};
+use std::io::Error as IoError;
 
+use failure::Fail;
 use tokio_timer::Error as TimerError;
 use zmq::Error as ZmqError;
 
@@ -27,18 +28,29 @@ use zmq::Error as ZmqError;
 /// Errors here can come from two places, IO, and ZeroMQ. Most errors encountered in this
 /// application are ZeroMQ errors, so `Error::Zmq(_)` is common, although we also need to catch IO
 /// errors from Tokio's `PollEvented` creation and TokioFileUnix's File creation.
-#[derive(Debug)]
+#[derive(Debug, Fail)]
 pub enum Error {
+    #[fail(display = "Error in ZeroMQ: {}", _0)]
     /// Stores ZeroMQ Errors
-    Zmq(ZmqError),
+    Zmq(#[cause] ZmqError),
+
+    #[fail(display = "Error creating file descriptor: {}", _0)]
     /// Stores PollEvented and File creation errors
-    Io(IoError),
+    Io(#[cause] IoError),
+
+    #[fail(display = "Error creating timer: {}", _0)]
     /// Stores Tokio Timer errors
-    Timer(TimerError),
+    Timer(#[cause] TimerError),
+
+    #[fail(display = "Could not send message to ZeroMQ")]
     /// If Sink socket is not done handling current request
     Sink,
+
+    #[fail(display = "Could not receive message from ZeroMQ")]
     /// If Stream socket is not done handling current request
     Stream,
+
+    #[fail(display = "Attempted to re-use already-used future")]
     /// If a future is used after it is consumed
     Reused,
 }
@@ -58,40 +70,5 @@ impl From<IoError> for Error {
 impl From<TimerError> for Error {
     fn from(e: TimerError) -> Self {
         Error::Timer(e)
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::Zmq(ref e) => write!(f, "Error from ZeroMQ: {}", e),
-            Error::Io(ref e) => write!(f, "Error creating file descriptor: {}", e),
-            Error::Timer(ref e) => write!(f, "Error creating timer: {}", e),
-            Error::Sink => write!(f, "Could not send message to ZeroMQ"),
-            Error::Stream => write!(f, "Could not receive message from ZeroMQ"),
-            Error::Reused => write!(f, "Attempted to re-use already-used future"),
-        }
-    }
-}
-
-impl StdError for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Zmq(_) => "Error interacting with ZeroMQ",
-            Error::Io(_) => "Error building socket",
-            Error::Timer(_) => "Error creating timed stream",
-            Error::Sink => "Could not send message to ZeroMQ",
-            Error::Stream => "Could not receive message from ZeroMQ",
-            Error::Reused => "Attempted to re-use already-used future",
-        }
-    }
-
-    fn cause(&self) -> Option<&StdError> {
-        match *self {
-            Error::Zmq(ref e) => Some(e),
-            Error::Io(ref e) => Some(e),
-            Error::Timer(ref e) => Some(e),
-            _ => None,
-        }
     }
 }
