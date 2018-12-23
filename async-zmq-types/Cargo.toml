@@ -15,4 +15,3 @@ zmq = "0.9"
 
 [dev-dependencies]
 tokio = "0.1"
-tokio-zmq = { version = "0.9", path = "../tokio-zmq" }

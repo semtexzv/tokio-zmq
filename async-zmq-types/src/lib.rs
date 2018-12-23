@@ -220,7 +220,7 @@ pub trait SinkSocket: IntoInnerSocket {
     ///
     /// fn main() {
     ///     let context = Arc::new(zmq::Context::new());
-    ///     let msg = zmq::Message::from_slice(b"Hello").unwrap();
+    ///     let msg = zmq::Message::from_slice(b"Hello");
     ///     let fut = Pub::builder(context)
     ///         .connect("tcp://localhost:5569")
     ///         .build()
@@ -263,9 +263,8 @@ pub trait SinkSocket: IntoInnerSocket {
     ///         .build()
     ///         .and_then(|zpub| {
     ///             iter_ok(0..5)
-    ///                 .and_then(|i| {
-    ///                     let msg = zmq::Message::from_slice(format!("i: {}", i).as_bytes())?;
-    ///                     Ok(msg.into()) as Result<Multipart, Error>
+    ///                 .map(|i| {
+    ///                     zmq::Message::from_slice(format!("i: {}", i).as_bytes()).into()
     ///                 })
     ///                 .forward(zpub.sink(25))
     ///         });

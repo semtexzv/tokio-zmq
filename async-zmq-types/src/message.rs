@@ -83,9 +83,9 @@ use zmq;
 ///
 /// fn main() {
 ///     let mut multipart: Multipart = Multipart::new();
-///     multipart.push_back(zmq::Message::from_slice(b"FILTER: asdf").unwrap());
-///     multipart.push_back(zmq::Message::from_slice(b"some.address").unwrap());
-///     multipart.push_back(zmq::Message::from_slice(b"Some content").unwrap());
+///     multipart.push_back(zmq::Message::from_slice(b"FILTER: asdf"));
+///     multipart.push_back(zmq::Message::from_slice(b"some.address"));
+///     multipart.push_back(zmq::Message::from_slice(b"Some content"));
 ///     let envelope = Envelope::from_multipart(multipart).unwrap();
 ///
 ///     let multipart2: Multipart = envelope.into();
