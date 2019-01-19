@@ -189,7 +189,7 @@ where
             bind: self.bind,
             connect: self.connect,
             identity: self.identity,
-            filter: pattern,
+            filter: vec![pattern],
         }
     }
 }
@@ -201,11 +201,25 @@ pub struct SubConfig<'a> {
     pub ctx: Arc<zmq::Context>,
     pub bind: Vec<&'a str>,
     pub connect: Vec<&'a str>,
-    pub filter: &'a [u8],
+    pub filter: Vec<&'a [u8]>,
     pub identity: Option<&'a [u8]>,
 }
 
 impl<'a> SubConfig<'a> {
+    /// Continue the building process into a SubConfig, for the SUB socket type which requires
+    /// setting a subscription filter.
+    pub fn filter(mut self, pattern: &'a [u8]) -> SubConfig<'a> {
+        self.filter.push(pattern);
+
+        SubConfig {
+            ctx: self.ctx,
+            bind: self.bind,
+            connect: self.connect,
+            identity: self.identity,
+            filter: self.filter,
+        }
+    }
+
     /// Finalize the `SubConfig` into a `Sub` if the creation is successful, or into an Error
     /// if something went wrong.
     pub fn do_build(self) -> Result<zmq::Socket, zmq::Error> {
@@ -223,7 +237,9 @@ impl<'a> SubConfig<'a> {
         }
         let sock = bind_all(sock, &bind)?;
         let sock = connect_all(sock, &connect)?;
-        sock.set_subscribe(filter)?;
+        for pattern in filter {
+            sock.set_subscribe(pattern)?;
+        }
 
         Ok(sock)
     }
