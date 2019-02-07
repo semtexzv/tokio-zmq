@@ -20,7 +20,7 @@
 //! This module defines the `SinkType` type. A wrapper around Sockets that implements
 //! `futures::Sink`.
 
-use std::{collections::VecDeque, mem};
+use std::collections::VecDeque;
 
 use async_zmq_types::Multipart;
 use futures::{Async, AsyncSink};
@@ -34,44 +34,39 @@ use crate::{
 
 pub(crate) struct SinkType {
     buffer_size: usize,
-    inner: SinkState,
+    pending: VecDeque<Multipart>,
 }
 
-pub(crate) enum SinkState {
-    Ready,
-    Pending(VecDeque<Multipart>),
-    Polling,
+impl Drop for SinkType {
+    fn drop(&mut self) {
+        if self.pending.len() > 0 {
+            error!("DROPPING NON-EMPTY PENDING BUFFER, {}", self.pending.len());
+        }
+    }
 }
 
 impl SinkType {
     pub(crate) fn new(buffer_size: usize) -> Self {
         SinkType {
             buffer_size,
-            inner: SinkState::Ready,
+            pending: VecDeque::new(),
         }
-    }
-
-    pub(crate) fn polling(&mut self) -> SinkState {
-        mem::replace(&mut self.inner, SinkState::Polling)
     }
 
     fn poll_request(
         &mut self,
         sock: &zmq::Socket,
         file: &EventedFile,
-        mut pending: VecDeque<Multipart>,
     ) -> Result<Async<()>, Error> {
-        if let Some(mut multipart) = pending.pop_front() {
+        if let Some(mut multipart) = self.pending.pop_front() {
             match RequestFuture.poll(sock, file, &mut multipart)? {
-                Async::Ready(()) => self.poll_request(sock, file, pending),
+                Async::Ready(()) => self.poll_request(sock, file),
                 Async::NotReady => {
-                    pending.push_front(multipart);
-                    self.inner = SinkState::Pending(pending);
+                    self.pending.push_front(multipart);
                     Ok(Async::NotReady)
                 }
             }
         } else {
-            self.inner = SinkState::Ready;
             Ok(Async::Ready(()))
         }
     }
@@ -82,52 +77,23 @@ impl SinkType {
         sock: &zmq::Socket,
         file: &EventedFile,
     ) -> Result<AsyncSink<Multipart>, Error> {
-        match self.polling() {
-            SinkState::Ready => {
-                let mut pending = VecDeque::new();
-                pending.push_back(multipart);
-
-                self.inner = SinkState::Pending(pending);
-                Ok(AsyncSink::Ready)
-            }
-            SinkState::Pending(mut pending) => {
-                if pending.len() > self.buffer_size {
-                    self.inner = SinkState::Pending(pending);
-
-                    if let Async::NotReady = self.poll_complete(sock, file)? {
-                        match self.polling() {
-                            SinkState::Ready => {
-                                self.inner = SinkState::Ready;
-
-                                return self.start_send(multipart, sock, file);
-                            }
-                            SinkState::Pending(pending) => {
-                                let pending_size = pending.len();
-                                self.inner = SinkState::Pending(pending);
-
-                                if pending_size > self.buffer_size {
-                                    return Ok(AsyncSink::NotReady(multipart));
-                                } else {
-                                    return self.start_send(multipart, sock, file);
-                                }
-                            }
-                            SinkState::Polling => {
-                                error!("Inner polling should not have been polling");
-                                return Err(Error::Sink);
-                            }
-                        }
+        if self.pending.len() > 0 {
+            if self.pending.len() > self.buffer_size {
+                if let Async::NotReady = self.poll_complete(sock, file)? {
+                    if self.pending.len() > self.buffer_size {
+                        return Ok(AsyncSink::NotReady(multipart));
                     } else {
                         return self.start_send(multipart, sock, file);
                     }
+                } else {
+                    return self.start_send(multipart, sock, file);
                 }
-                pending.push_back(multipart);
-                self.inner = SinkState::Pending(pending);
-                Ok(AsyncSink::Ready)
             }
-            SinkState::Polling => {
-                error!("Polling called while polling");
-                Err(Error::Sink)
-            }
+            self.pending.push_back(multipart);
+            Ok(AsyncSink::Ready)
+        } else {
+            self.pending.push_back(multipart);
+            Ok(AsyncSink::Ready)
         }
     }
 
@@ -136,16 +102,10 @@ impl SinkType {
         sock: &zmq::Socket,
         file: &EventedFile,
     ) -> Result<Async<()>, Error> {
-        match self.polling() {
-            SinkState::Pending(pending) => self.poll_request(sock, file, pending),
-            SinkState::Ready => {
-                self.inner = SinkState::Ready;
-                Ok(Async::Ready(()))
-            }
-            SinkState::Polling => {
-                error!("Error in poll_complete");
-                Err(Error::Sink)
-            }
+        if self.pending.len() > 0 {
+            self.poll_request(sock, file)
+        } else {
+            Ok(Async::Ready(()))
         }
     }
 }

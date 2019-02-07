@@ -17,10 +17,9 @@
  * along with Tokio ZMQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-use std::mem;
-
 use async_zmq_types::Multipart;
 use futures::Async;
+use log::error;
 use zmq;
 
 use crate::{
@@ -29,43 +28,13 @@ use crate::{
 };
 
 pub(crate) struct StreamType {
-    inner: StreamState,
-}
-
-pub(crate) enum StreamState {
-    Ready,
-    Pending(Multipart),
-    Polling,
+    multipart: Multipart,
 }
 
 impl StreamType {
     pub(crate) fn new() -> Self {
         StreamType {
-            inner: StreamState::Ready,
-        }
-    }
-
-    pub(crate) fn polling(&mut self) -> StreamState {
-        mem::replace(&mut self.inner, StreamState::Polling)
-    }
-
-    pub(crate) fn poll_response(
-        &mut self,
-        sock: &zmq::Socket,
-        file: &EventedFile,
-        mut multipart: Multipart,
-    ) -> Result<Async<Option<Multipart>>, Error> {
-        match ResponseFuture.poll(&sock, &file, &mut multipart)? {
-            Async::Ready(item) => {
-                self.inner = StreamState::Ready;
-
-                Ok(Async::Ready(Some(item)))
-            }
-            Async::NotReady => {
-                self.inner = StreamState::Pending(multipart);
-
-                Ok(Async::NotReady)
-            }
+            multipart: Multipart::new(),
         }
     }
 
@@ -74,10 +43,21 @@ impl StreamType {
         sock: &zmq::Socket,
         file: &EventedFile,
     ) -> Result<Async<Option<Multipart>>, Error> {
-        match self.polling() {
-            StreamState::Ready => self.poll_response(sock, file, Multipart::new()),
-            StreamState::Pending(multipart) => self.poll_response(sock, file, multipart),
-            StreamState::Polling => Err(Error::Stream),
+        match ResponseFuture.poll(&sock, &file, &mut self.multipart)? {
+            Async::Ready(item) => {
+                Ok(Async::Ready(Some(item)))
+            }
+            Async::NotReady => {
+                Ok(Async::NotReady)
+            }
+        }
+    }
+}
+
+impl Drop for StreamType {
+    fn drop(&mut self) {
+        if self.multipart.len() > 0 {
+            error!("DROPPING RECEIVED NON-EMPTY MULTIPART, {}", self.multipart.len());
         }
     }
 }

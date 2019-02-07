@@ -41,7 +41,6 @@ impl RequestFuture {
     fn send(
         &mut self,
         sock: &zmq::Socket,
-        file: &EventedFile,
         multipart: &mut Multipart,
     ) -> Result<Async<()>, Error> {
         while let Some(msg) = multipart.pop_front() {
@@ -52,7 +51,7 @@ impl RequestFuture {
             };
 
             debug!("RequestFuture: sending: {:?}", msg.as_str());
-            match self.send_msg(sock, file, msg, &place)? {
+            match self.send_msg(sock, msg, &place)? {
                 None => {
                     if multipart.is_empty() {
                         break;
@@ -65,29 +64,15 @@ impl RequestFuture {
             }
         }
 
-        file.clear_write_ready()?;
-        current().notify();
-
         Ok(Async::Ready(()))
     }
 
     fn send_msg(
         &mut self,
         sock: &zmq::Socket,
-        file: &EventedFile,
         msg: Message,
         place: &MsgPlace,
     ) -> Result<Option<Message>, Error> {
-        let events = sock.get_events()?;
-
-        if (events & POLLOUT) != POLLOUT {
-            file.clear_write_ready()?;
-
-            current().notify();
-
-            return Ok(Some(msg));
-        }
-
         let flags = DONTWAIT | if *place == MsgPlace::Last { 0 } else { SNDMORE };
 
         let msg_clone = Message::from_slice(&msg);
@@ -107,16 +92,13 @@ impl RequestFuture {
         if let Async::NotReady = file.poll_write_ready()? {
             // Get the events currently waiting on the socket
             let events = sock.get_events()?;
-            if (events & POLLOUT) == POLLOUT {
-                // manually schedule a wakeup and procede
-                file.clear_write_ready()?;
-                current().notify();
-            } else {
-                file.clear_write_ready()?;
+            if (events & POLLOUT) != POLLOUT {
                 return Ok(false);
             }
         }
 
+        current().notify();
+        file.clear_write_ready()?;
         Ok(true)
     }
 
@@ -126,8 +108,13 @@ impl RequestFuture {
         file: &EventedFile,
         multipart: &mut Multipart,
     ) -> Result<Async<()>, Error> {
+        if let Async::Ready(_) = file.poll_read_ready(Ready::readable())? {
+            current().notify();
+            file.clear_read_ready(Ready::readable())?;
+        }
+
         if self.check_write(sock, file)? {
-            self.send(sock, file, multipart)
+            self.send(sock, multipart)
         } else {
             Ok(Async::NotReady)
         }
@@ -142,19 +129,8 @@ impl ResponseFuture {
     fn recv(
         &mut self,
         sock: &zmq::Socket,
-        file: &EventedFile,
         multipart: &mut Multipart,
     ) -> Result<Async<Multipart>, Error> {
-        let events = sock.get_events()?;
-
-        if (events & POLLIN) != POLLIN {
-            file.clear_read_ready(Ready::readable())?;
-
-            current().notify();
-
-            return Ok(Async::NotReady);
-        }
-
         let mut first = true;
 
         loop {
@@ -197,16 +173,13 @@ impl ResponseFuture {
     fn check_read(&mut self, sock: &zmq::Socket, file: &EventedFile) -> Result<bool, Error> {
         if let Async::NotReady = file.poll_read_ready(Ready::readable())? {
             let events = sock.get_events()?;
-            if (events & POLLIN) == POLLIN {
-                // manually schedule a wakeup and procede
-                file.clear_read_ready(Ready::readable())?;
-                current().notify();
-            } else {
-                file.clear_read_ready(Ready::readable())?;
+            if (events & POLLIN) != POLLIN {
                 return Ok(false);
             }
         }
 
+        current().notify();
+        file.clear_read_ready(Ready::readable())?;
         Ok(true)
     }
 
@@ -216,8 +189,13 @@ impl ResponseFuture {
         file: &EventedFile,
         multipart: &mut Multipart,
     ) -> Result<Async<Multipart>, Error> {
+        if let Async::Ready(_) = file.poll_write_ready()? {
+            current().notify();
+            file.clear_write_ready()?;
+        }
+
         if self.check_read(sock, file)? {
-            self.recv(sock, file, multipart)
+            self.recv(sock, multipart)
         } else {
             Ok(Async::NotReady)
         }
