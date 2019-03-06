@@ -24,6 +24,7 @@ use std::{marker::PhantomData, sync::Arc};
 use zmq;
 
 use crate::{IntoInnerSocket, Pair, Sub, UnPair};
+use zmq::Socket;
 
 fn bind_all(sock: zmq::Socket, binds: &[&str]) -> zmq::Result<zmq::Socket> {
     for bind in binds {
@@ -48,6 +49,7 @@ where
 {
     ctx: Arc<zmq::Context>,
     identity: Option<&'a [u8]>,
+    custom : Box<Fn(&Socket)>,
     _type: PhantomData<T>,
 }
 
@@ -63,6 +65,7 @@ where
         SocketBuilder {
             ctx,
             identity: None,
+            custom : Box::new(|_| {}),
             _type: PhantomData,
         }
     }
@@ -70,10 +73,18 @@ where
     /// Give the socket a custom identity
     pub fn identity(self, identity: &'a [u8]) -> Self {
         SocketBuilder {
-            ctx: self.ctx,
             identity: Some(identity),
-            _type: self._type,
+            .. self
         }
+    }
+    pub fn customize<F>(self, f: F) -> Self
+        where F : Fn(&zmq::Socket) + 'static
+    {
+        SocketBuilder {
+            custom : Box::new(f),
+            .. self
+        }
+
     }
 
     /// Bind the socket to an address
@@ -86,6 +97,7 @@ where
             bind: vec![addr],
             connect: Vec::new(),
             identity: self.identity,
+            customize : self.custom,
             _type: self._type,
         }
     }
@@ -100,6 +112,7 @@ where
             bind: Vec::new(),
             connect: vec![addr],
             identity: self.identity,
+            customize : self.custom,
             _type: self._type,
         }
     }
@@ -117,6 +130,7 @@ where
     pub bind: Vec<&'a str>,
     pub connect: Vec<&'a str>,
     pub identity: Option<&'a [u8]>,
+    customize :  Box<Fn(&Socket)>,
     _type: PhantomData<T>,
 }
 
@@ -146,6 +160,7 @@ where
             bind,
             connect,
             identity,
+            customize,
             _type,
         } = self;
 
@@ -153,6 +168,7 @@ where
         if let Some(identity) = identity {
             sock.set_identity(identity)?;
         }
+        customize(&sock);
         let sock = bind_all(sock, &bind)?;
         let sock = connect_all(sock, &connect)?;
 
